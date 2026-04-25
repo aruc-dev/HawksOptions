@@ -47,6 +47,11 @@ except Exception:
 
 LockMode = Literal["shared", "exclusive"]
 
+# Number of bytes used as the Windows msvcrt lock region. All callers
+# seek to offset 0 before acquiring/releasing so every process contends
+# on the same bytes regardless of the file-open mode (e.g. append).
+_LOCK_NBYTES = 4096
+
 
 def _acquire(handle: IO, mode: LockMode) -> None:
     if _HAS_FCNTL:
@@ -55,8 +60,12 @@ def _acquire(handle: IO, mode: LockMode) -> None:
         return
     if _HAS_MSVCRT:  # pragma: no cover - Windows path
         # msvcrt has no shared lock primitive; fall back to exclusive.
+        # Seek to a stable offset so all processes contend on the same
+        # bytes regardless of the current file-position (e.g. EOF in
+        # append mode).
         try:
-            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            os.lseek(handle.fileno(), 0, os.SEEK_SET)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, _LOCK_NBYTES)
         except OSError:
             pass
         return
@@ -72,7 +81,8 @@ def _release(handle: IO) -> None:
         return
     if _HAS_MSVCRT:  # pragma: no cover - Windows path
         try:
-            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            os.lseek(handle.fileno(), 0, os.SEEK_SET)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, _LOCK_NBYTES)
         except OSError:
             pass
 

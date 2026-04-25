@@ -121,7 +121,7 @@ def _mark_to_market(
         legs.append(refreshed_leg)
         exit_slippage += _leg_slippage_cost(refreshed_leg, slip)
     position.legs = legs  # intentionally mutate the live backtest snapshot
-    position.current_close_cost = round(max(close_cost + exit_slippage, 0.0), 2)
+    position.current_close_cost = round(close_cost + exit_slippage, 2)
     position.current_pnl = round(position.entry_credit - position.current_close_cost, 2)
     position.short_leg_itm = short_leg_itm
     position.remaining_extrinsic_value = (
