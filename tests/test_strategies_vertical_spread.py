@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from copy import deepcopy
 from datetime import date
 
 from core.alpaca_options_client import AlpacaOptionsClient
@@ -11,7 +12,8 @@ from strategies.vertical_spread import VerticalSpreadStrategy
 
 class VerticalSpreadStrategyTests(unittest.TestCase):
     def test_generates_defined_risk_spread(self):
-        config = load_config()
+        config = deepcopy(load_config())
+        config["strategies"]["vertical_spread"]["enabled"] = True
         client = AlpacaOptionsClient(config, use_sample_data=True)
         underlying = load_underlyings(config)[0]
         snapshot = client.get_underlying_snapshot(underlying["symbol"], as_of=date(2026, 4, 23))

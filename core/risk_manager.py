@@ -74,6 +74,10 @@ def _days_until(target: date | None, as_of: date) -> int | None:
     return (target - as_of).days
 
 
+def _position_dte(position: PositionSnapshot, as_of: date) -> int:
+    return min((leg.contract.days_to_expiration(as_of) for leg in position.legs), default=0)
+
+
 def _conflicts_with_open_position(order: StrategyOrder, open_positions: Iterable[PositionSnapshot]) -> bool:
     incoming_short_types = {leg.contract.option_type for leg in order.short_legs}
     incoming_strikes = {leg.contract.strike for leg in order.short_legs}
@@ -185,10 +189,11 @@ def identify_elevated_positions(
     cutoff_hour, cutoff_minute = [int(part) for part in cutoff_text.split(":", 1)]
     flagged: list[str] = []
     for position in positions:
+        position_dte = _position_dte(position, as_of.date())
         loss_alert = position.current_close_cost >= (position.entry_credit * max(position.loss_stop_multiple * 0.75, 0.0))
         earnings_days = _days_until(position.next_earnings_date, as_of.date())
         if (
-            position.days_to_expiration <= 21
+            position_dte <= 21
             or position.short_leg_itm
             or (
                 position.roll_threshold_delta is not None
@@ -198,7 +203,7 @@ def identify_elevated_positions(
             or (earnings_days is not None and earnings_days <= int(config.get("gates", {}).get("close_positions_days_before_earnings", 2)))
             or loss_alert
             or (
-                position.days_to_expiration <= 0
+                position_dte <= 0
                 and as_of.time() >= time(cutoff_hour, cutoff_minute)
             )
         ):
@@ -218,13 +223,14 @@ def continuous_risk_checks(
     positions = list(positions)
     elevated = set(identify_elevated_positions(positions, config=config, as_of=as_of))
     for position in positions:
+        position_dte = _position_dte(position, as_of.date())
         if position.current_pnl >= position.entry_credit * position.profit_take_pct:
             actions.append({"strategy_id": position.strategy_id, "action": "take_profit"})
         if position.current_close_cost >= position.entry_credit * position.loss_stop_multiple:
             actions.append({"strategy_id": position.strategy_id, "action": "stop_loss"})
         if position.roll_threshold_delta is not None and abs(position.short_delta) >= abs(position.roll_threshold_delta):
             actions.append({"strategy_id": position.strategy_id, "action": "roll_review"})
-        if position.days_to_expiration <= 21:
+        if position_dte <= 21:
             actions.append({"strategy_id": position.strategy_id, "action": "time_exit"})
         if should_close_short_call_for_ex_div(position, as_of=as_of.date()):
             actions.append({"strategy_id": position.strategy_id, "action": "close_for_ex_div"})

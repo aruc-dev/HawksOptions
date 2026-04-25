@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from core.models import OptionContract, OrderLeg, PositionSnapshot, StrategyOrder
 from core.risk_manager import continuous_risk_checks, pre_trade_check
@@ -107,6 +107,52 @@ class ContinuousRiskTests(unittest.TestCase):
         actions = {item["action"] for item in payload["actions"]}
         self.assertIn("take_profit", actions)
         self.assertIn("roll_review", actions)
+
+    def test_time_exit_uses_simulated_as_of_date(self):
+        current_day = date.today()
+        position = PositionSnapshot(
+            strategy_id="spread-2",
+            strategy_name="vertical_spread",
+            underlying="SPY",
+            legs=[
+                OrderLeg(
+                    contract=OptionContract(
+                        contract_symbol="SPYTEST",
+                        underlying="SPY",
+                        option_type="put",
+                        strike=500.0,
+                        expiration=current_day + timedelta(days=10),
+                        bid=1.0,
+                        ask=1.05,
+                        open_interest=500,
+                        volume=50,
+                        implied_volatility=0.24,
+                        delta=-0.2,
+                        theta=-0.1,
+                        vega=0.2,
+                        gamma=0.01,
+                        underlying_price=520.0,
+                    ),
+                    side="sell_to_open",
+                )
+            ],
+            opened_at=datetime.now(timezone.utc),
+            entry_credit=100.0,
+            max_loss=200.0,
+            profit_take_pct=0.5,
+            loss_stop_multiple=1.5,
+            roll_threshold_delta=-0.4,
+            current_close_cost=90.0,
+            current_pnl=10.0,
+        )
+        simulated_as_of = datetime.combine(current_day - timedelta(days=20), datetime.min.time(), tzinfo=timezone.utc)
+        payload = continuous_risk_checks(
+            [position],
+            config={"gates": {"close_positions_days_before_earnings": 2}, "schedule": {"expiration_exit_cutoff_time": "15:15"}},
+            as_of=simulated_as_of,
+        )
+        actions = {item["action"] for item in payload["actions"]}
+        self.assertNotIn("time_exit", actions)
 
 
 if __name__ == "__main__":

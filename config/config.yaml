@@ -64,7 +64,7 @@ strategies:
     weight: 1.0
 
   vertical_spread:
-    enabled: true
+    enabled: false
     required_options_level: 3
     swing_only: true
     variant: bull_put_credit
