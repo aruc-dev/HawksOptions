@@ -1,0 +1,11 @@
+[Unit]
+Description=Run HawksOptions elevated risk watch every minute
+
+[Timer]
+OnCalendar=*:0/1
+Persistent=true
+AccuracySec=30s
+Unit=hawksoptions-risk-watch.service
+
+[Install]
+WantedBy=timers.target

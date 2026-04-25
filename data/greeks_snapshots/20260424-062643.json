@@ -1,0 +1,15 @@
+{
+  "generated_at": "2026-04-23T16:00:00+00:00",
+  "portfolio_greeks": {
+    "delta": 0.0,
+    "theta": 0.0,
+    "vega": 0.0,
+    "gamma": 0.0
+  },
+  "actions": [],
+  "elevated_positions": [],
+  "daily_loss": {
+    "status": "ok",
+    "loss_pct": 0.0
+  }
+}

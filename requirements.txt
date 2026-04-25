@@ -1,0 +1,11 @@
+# HawksOptions core dependencies
+pyyaml>=6.0
+python-dotenv>=1.0.1
+tzdata>=2024.1
+pytz>=2024.1
+
+# Optional live integrations
+alpaca-py>=0.28.0
+
+# Optional dashboard/runtime helpers used by tests and deployment
+jinja2>=3.1.4

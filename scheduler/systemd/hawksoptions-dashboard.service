@@ -1,0 +1,26 @@
+[Unit]
+Description=HawksOptions dashboard (read-only, 127.0.0.1:8080)
+After=network.target
+
+[Service]
+Type=simple
+User=hawksoptions-dash
+Group=hawksoptions-dash
+WorkingDirectory=/home/ec2-user/HawksOptions
+EnvironmentFile=/etc/hawksoptions-dash/env
+ExecStart=/home/ec2-user/HawksOptions/.venv/bin/uvicorn dashboard.app:app --host 127.0.0.1 --port 8080 --log-level info
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadOnlyPaths=/home/ec2-user/HawksOptions
+ReadWritePaths=/home/ec2-user/HawksOptions/logs
+PrivateTmp=yes
+PrivateDevices=yes
+MemoryDenyWriteExecute=yes
+InaccessiblePaths=/dev/shm/.hawksoptions.env
+InaccessiblePaths=/etc/hawksoptions/hawksoptions.env
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,32 @@
+Copyright (c) 2024-2026 HawksOptions Contributors
+All rights reserved except as granted below.
+
+HawksOptions is offered under a dual-license model:
+
+1. Open-source license:
+   GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later)
+
+   You may use, modify, and distribute this software under the terms of the
+   AGPL-3.0-or-later. The full license text is included in this repository
+   in the file LICENSE-AGPL and is also available at:
+   https://www.gnu.org/licenses/agpl-3.0.txt
+
+2. Commercial license:
+   A separate commercial license may be obtained by written agreement.
+   The commercial license permits proprietary use, closed-source embedding,
+   redistribution without AGPL obligations, or other use cases that are
+   incompatible with the AGPL.
+
+   To request a commercial license, contact:
+     bait.wall.store@staycloaked.com
+
+If you use HawksOptions under the AGPL-3.0-or-later, you must comply with the
+terms of that license, including, if you modify it and deploy it for remote
+network interaction, providing Corresponding Source to those users.
+
+If you require proprietary use, closed-source embedding, redistribution,
+or other use cases that are not compatible with the AGPL, you must obtain a
+commercial license as described above.
+
+No warranty is provided under either license unless explicitly stated in a
+written commercial agreement.

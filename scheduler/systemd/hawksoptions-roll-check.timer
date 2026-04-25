@@ -1,0 +1,11 @@
+[Unit]
+Description=Run HawksOptions roll checks hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+AccuracySec=1min
+Unit=hawksoptions-roll-check.service
+
+[Install]
+WantedBy=timers.target

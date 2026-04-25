@@ -1,0 +1,11 @@
+[Unit]
+Description=Run HawksOptions end-of-day report
+
+[Timer]
+OnCalendar=Mon..Fri 21:45
+Persistent=true
+AccuracySec=1min
+Unit=hawksoptions-eod-report.service
+
+[Install]
+WantedBy=timers.target

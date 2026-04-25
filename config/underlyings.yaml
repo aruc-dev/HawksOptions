@@ -1,0 +1,41 @@
+underlyings:
+  - symbol: SPY
+    max_contracts: 5
+    strategies_allowed: [cash_secured_put, vertical_spread, iron_condor]
+    next_earnings_date:
+    ex_dividend_date: 2026-06-19
+    dividend_amount: 1.95
+    realized_vol_20d: 0.14
+    atr_pct: 0.012
+  - symbol: QQQ
+    max_contracts: 5
+    strategies_allowed: [cash_secured_put, vertical_spread, iron_condor]
+    next_earnings_date:
+    ex_dividend_date: 2026-06-22
+    dividend_amount: 0.76
+    realized_vol_20d: 0.18
+    atr_pct: 0.015
+  - symbol: IWM
+    max_contracts: 3
+    strategies_allowed: [iron_condor, vertical_spread]
+    next_earnings_date:
+    ex_dividend_date: 2026-06-18
+    dividend_amount: 0.92
+    realized_vol_20d: 0.19
+    atr_pct: 0.017
+  - symbol: AAPL
+    max_contracts: 2
+    strategies_allowed: [cash_secured_put, covered_call, vertical_spread]
+    next_earnings_date: 2026-05-02
+    ex_dividend_date: 2026-05-09
+    dividend_amount: 0.27
+    realized_vol_20d: 0.22
+    atr_pct: 0.021
+  - symbol: MSFT
+    max_contracts: 2
+    strategies_allowed: [cash_secured_put, covered_call, vertical_spread]
+    next_earnings_date: 2026-05-06
+    ex_dividend_date: 2026-05-20
+    dividend_amount: 0.83
+    realized_vol_20d: 0.20
+    atr_pct: 0.018

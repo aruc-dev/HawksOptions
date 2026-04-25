@@ -1,0 +1,144 @@
+# HawksOptions configuration
+
+mode: paper
+secrets_source: local
+
+account:
+  options_level: 3
+  pdt_threshold_usd: 25000
+  max_portfolio_risk_pct: 0.20
+  max_single_position_risk_pct: 0.05
+  max_open_strategies: 8
+  reserve_cash_pct: 0.15
+  daily_loss_halt_pct: 0.05
+  tail_risk_close_pct: 0.08
+  max_rolls_per_strategy_id: 2
+
+gates:
+  min_dte_entry: 7
+  max_dte_entry: 55
+  min_open_interest: 100
+  min_daily_volume: 10
+  max_bid_ask_spread_pct: 0.10
+  earnings_blackout_days_before: 5
+  close_positions_days_before_earnings: 2
+  min_iv_rank_for_short_premium: 30
+  max_iv_rank_for_long_premium: 40
+
+underlyings:
+  source: config/underlyings.yaml
+  refresh_earnings_dates_days: 7
+
+market_data:
+  use_sample_data: true
+  risk_free_rate: 0.045
+  default_dividend_yield: 0.0
+
+strategies:
+  cash_secured_put:
+    enabled: true
+    required_options_level: 1
+    swing_only: true
+    target_delta: -0.20
+    target_dte: 35
+    target_dte_min: 25
+    target_dte_max: 45
+    profit_take_pct: 0.50
+    loss_stop_multiple: 2.0
+    roll_threshold_delta: -0.40
+    max_contracts_per_underlying: 1
+    weight: 1.0
+
+  covered_call:
+    enabled: true
+    required_options_level: 1
+    swing_only: true
+    target_delta: 0.25
+    target_dte: 35
+    target_dte_min: 25
+    target_dte_max: 45
+    profit_take_pct: 0.50
+    loss_stop_multiple: 2.0
+    roll_threshold_delta: 0.45
+    close_before_ex_div_if_itm: true
+    weight: 1.0
+
+  vertical_spread:
+    enabled: true
+    required_options_level: 3
+    swing_only: true
+    variant: bull_put_credit
+    short_delta: -0.25
+    long_delta: -0.10
+    target_dte: 35
+    target_dte_min: 25
+    target_dte_max: 45
+    profit_take_pct: 0.50
+    loss_stop_multiple: 1.5
+    roll_threshold_delta: -0.40
+    weight: 1.0
+
+  iron_condor:
+    enabled: true
+    required_options_level: 3
+    swing_only: true
+    put_short_delta: -0.18
+    put_long_delta: -0.08
+    call_short_delta: 0.18
+    call_long_delta: 0.08
+    target_dte: 40
+    target_dte_min: 30
+    target_dte_max: 50
+    profit_take_pct: 0.40
+    loss_stop_multiple: 2.0
+    warning_delta_abs: 0.40
+    skip_if_earnings_within_dte: true
+    weight: 1.0
+
+  calendar_spread:
+    enabled: false
+    required_options_level: 3
+    swing_only: true
+    target_delta: 0.30
+    front_dte: 21
+    back_dte: 45
+    weight: 0.5
+
+  earnings_iron_condor:
+    enabled: false
+    required_options_level: 3
+    swing_only: true
+    require_iv_rank: 60
+    dte_min: 7
+    dte_max: 14
+    max_contracts: 1
+    weight: 0.3
+
+ai:
+  enabled: false
+  provider: openai
+  daily_spend_cap_usd: 5.0
+  news_gate:
+    enabled: true
+    veto_threshold: 0.7
+  earnings_sentiment:
+    enabled: false
+  trade_idea_critic:
+    enabled: true
+    veto_on: major_concern
+
+schedule:
+  scan_interval_min: 30
+  risk_check_interval_min: 5
+  elevated_risk_check_interval_min: 1
+  roll_check_interval_min: 60
+  eod_report_time: "16:45"
+  expiration_exit_cutoff_time: "15:15"
+
+reporting:
+  trade_log_file: data/trades.csv
+  positions_file: data/positions.json
+  greeks_snapshot_dir: data/greeks_snapshots
+  iv_history_file: data/iv_rank_history.csv
+  reports_dir: reports
+  logs_dir: logs

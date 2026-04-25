@@ -1,0 +1,62 @@
+body {
+  margin: 0;
+  font-family: "IBM Plex Sans", "Avenir Next", sans-serif;
+  background:
+    radial-gradient(circle at top left, rgba(204, 85, 32, 0.18), transparent 28%),
+    radial-gradient(circle at top right, rgba(0, 128, 96, 0.16), transparent 24%),
+    linear-gradient(180deg, #0f1416 0%, #151b1f 100%);
+  color: #eef1eb;
+}
+
+.shell {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 32px 20px 48px;
+  display: grid;
+  gap: 20px;
+}
+
+.masthead {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 16px;
+}
+
+.masthead h1 {
+  margin: 0;
+  font-size: 2rem;
+  letter-spacing: 0.03em;
+}
+
+.masthead p {
+  margin: 6px 0 0;
+  color: #c7d0c0;
+}
+
+.badge {
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(245, 193, 83, 0.14);
+  border: 1px solid rgba(245, 193, 83, 0.35);
+  font-size: 0.8rem;
+}
+
+.panel {
+  background: rgba(19, 24, 28, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  padding: 18px;
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.18);
+}
+
+.panel h2 {
+  margin-top: 0;
+}
+
+pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #d8dfd0;
+}

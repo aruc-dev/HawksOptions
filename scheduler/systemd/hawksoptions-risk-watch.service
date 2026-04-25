@@ -1,0 +1,14 @@
+[Unit]
+Description=HawksOptions elevated risk watch
+After=network-online.target hawksoptions-secrets.service
+Requires=hawksoptions-secrets.service
+
+[Service]
+Type=oneshot
+User=ec2-user
+Group=ec2-user
+WorkingDirectory=/home/ec2-user/HawksOptions
+EnvironmentFile=/etc/hawksoptions/hawksoptions.env
+ExecStart=/home/ec2-user/HawksOptions/scripts/run_hawksoptions_job.sh scheduler/run_risk_watch.py
+TimeoutStartSec=15min
+Restart=no

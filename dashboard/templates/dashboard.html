@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}HawksOptions — {{ mode|upper }}{% endblock %}
+{% block body %}
+<main class="shell">
+  <header class="masthead">
+    <div>
+      <h1>HawksOptions</h1>
+      <p>Read-only options operations dashboard</p>
+    </div>
+    <div class="badge">{{ mode|upper }}</div>
+  </header>
+
+  <section class="panel">
+    <h2>Overview</h2>
+    <p id="overview-status">Loading state…</p>
+  </section>
+
+  <section class="panel">
+    <h2>Open Strategies</h2>
+    <pre id="positions-json">[]</pre>
+  </section>
+
+  <section class="panel">
+    <h2>Portfolio Greeks</h2>
+    <pre id="greeks-json">{}</pre>
+  </section>
+</main>
+
+<script src="/static/app.js"></script>
+{% endblock %}

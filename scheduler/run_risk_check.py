@@ -1,0 +1,60 @@
+"""Baseline five-minute risk checks."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from datetime import date, datetime, time, timezone
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(BASE_DIR))
+
+from core.order_executor import save_positions
+from core.risk_manager import (
+    continuous_risk_checks,
+    daily_loss_status,
+    read_daily_baseline,
+    write_daily_baseline,
+    write_greeks_snapshot,
+)
+from scheduler.common import current_positions, load_runtime, refresh_positions
+
+
+def run_risk_check(*, config: dict | None = None, as_of: date | None = None) -> dict[str, object]:
+    as_of = as_of or date.today()
+    config, client, paths = load_runtime(config)
+    positions = refresh_positions(current_positions(paths), client=client, as_of=as_of)
+    save_positions(paths["positions"], positions)
+    payload = continuous_risk_checks(
+        positions,
+        config=config,
+        as_of=datetime.combine(as_of, time(16, 0), tzinfo=timezone.utc),
+    )
+    baseline = read_daily_baseline(paths["baseline"])
+    if baseline is None or baseline.get("date") != as_of.isoformat():
+        baseline = write_daily_baseline(paths["baseline"], client.get_account()["portfolio_value"], as_of=datetime.combine(as_of, time(13, 31), tzinfo=timezone.utc))
+    payload["daily_loss"] = daily_loss_status(
+        float(baseline["portfolio_value"]),
+        float(client.get_account()["portfolio_value"]),
+        halt_pct=float(config.get("account", {}).get("daily_loss_halt_pct", 0.05)),
+        hard_close_pct=float(config.get("account", {}).get("tail_risk_close_pct", 0.08)),
+    )
+    snapshot_path = write_greeks_snapshot(paths["greeks_dir"], payload, as_of=datetime.now(timezone.utc))
+    payload["snapshot_path"] = str(snapshot_path)
+    return payload
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Run HawksOptions risk checks")
+    parser.add_argument("--dry-run", action="store_true", help="Accepted for interface compatibility")
+    args = parser.parse_args(argv)
+    _ = args
+    result = run_risk_check()
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())
