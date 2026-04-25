@@ -18,3 +18,14 @@ python3 scheduler/run_risk_check.py --dry-run
 python3 scheduler/run_roll_check.py --dry-run
 python3 scheduler/run_backtest.py --days 30 --fund 10000
 ```
+
+## Beads
+
+If this checkout is initialized for `bd` (Beads), start with `bd ready --json`
+and claim work with `bd update <id> --claim --json`.
+
+Bootstrap once with:
+
+```bash
+./scripts/init_beads.sh
+```

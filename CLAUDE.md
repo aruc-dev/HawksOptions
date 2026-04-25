@@ -30,6 +30,18 @@ python3 -m unittest discover -v
 python3 scheduler/run_backtest.py --days 30 --fund 10000
 ```
 
+## Beads Task Tracking
+
+This repo supports `bd` (Beads) for local task tracking. If it is initialized
+for the checkout, prefer `bd ready --json` and `bd update <id> --claim --json`
+over markdown task lists.
+
+Bootstrap once with:
+
+```bash
+./scripts/init_beads.sh
+```
+
 ## Deployment Notes
 
 - Keep trading and dashboard credentials separate.

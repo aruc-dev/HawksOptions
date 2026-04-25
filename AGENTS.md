@@ -28,6 +28,23 @@ python3 scheduler/run_risk_check.py --dry-run
 python3 scheduler/run_backtest.py --days 30 --fund 10000
 ```
 
+## Task Tracking
+
+This repo supports `bd` (Beads) for repo-local task tracking.
+
+- If `bd` is installed and initialized, prefer it over markdown task lists for
+  follow-up work.
+- Beads does not relax any trading or dashboard safety rules in this file.
+- Use JSON output for automation: `bd ready --json`, `bd show <id> --json`,
+  `bd update <id> --claim --json`.
+
+Bootstrap once per checkout:
+
+```bash
+./scripts/init_beads.sh
+bd ready --json
+```
+
 ## Files That Matter
 
 - Config: `config/config.yaml`

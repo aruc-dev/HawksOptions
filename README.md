@@ -48,6 +48,14 @@ python3 scheduler/run_scan.py --dry-run
 The default config uses sample market data so the system stays runnable before
 real Alpaca keys are added.
 
+## Optional: Beads Task Tracking
+
+This repo includes repo-level support for `bd` (Beads), an agent-oriented task
+tracker. Install `bd`, run `./scripts/init_beads.sh`, then use `bd ready --json`
+to inspect or claim work.
+
+See [docs/beads.md](docs/beads.md) for setup and workflow details.
+
 ## Safety Defaults
 
 - `mode: paper`
@@ -56,6 +64,20 @@ real Alpaca keys are added.
 - max single-position risk capped at 5% of equity
 - max portfolio defined-risk capped at 20% of equity
 - earnings blackout and ex-dividend protection enabled
+
+## Backtest Disclaimer
+
+Rule fidelity is decent. Market fidelity is not.
+
+The bundled backtest is reasonably close in the sense that it uses the repo's
+actual strategy constructors, the same pre-trade risk gates, and the same
+continuous exit rules. That makes it useful for regression testing and comparing
+one config against another.
+
+It is not close enough to treat the PnL as live-trading expectancy. The default
+backtest uses deterministic sample market data and synthetic option chains, so
+results should be treated as a strategy-logic signal rather than a real-world
+profit forecast.
 
 ## Dashboard
 
