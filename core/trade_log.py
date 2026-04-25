@@ -8,6 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
+from core.file_lock import locked_open
+
 
 TRADE_LOG_FIELDS = [
     "timestamp",
@@ -45,16 +47,21 @@ TRADE_LOG_FIELDS = [
 def read_trade_rows(path: Path) -> list[dict[str, str]]:
     if not path.exists():
         return []
-    with open(path, "r", newline="", encoding="utf-8") as handle:
+    with locked_open(path, "r", lock="shared", newline="") as handle:
         return list(csv.DictReader(handle))
 
 
 def append_trade_rows(path: Path, rows: Iterable[dict[str, object]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    file_exists = path.exists()
-    with open(path, "a", newline="", encoding="utf-8") as handle:
+    with locked_open(path, "a", lock="exclusive", newline="") as handle:
+        # The stream can be opened before another process writes the
+        # header, so inspect the on-disk size after acquiring the lock.
+        try:
+            needs_header = path.stat().st_size == 0
+        except FileNotFoundError:
+            needs_header = True
         writer = csv.DictWriter(handle, fieldnames=TRADE_LOG_FIELDS)
-        if not file_exists:
+        if needs_header:
             writer.writeheader()
         for row in rows:
             payload = {field: row.get(field, "") for field in TRADE_LOG_FIELDS}

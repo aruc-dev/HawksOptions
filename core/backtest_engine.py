@@ -57,23 +57,76 @@ def _max_drawdown(equity_curve: list[float]) -> float:
     return round(max_dd, 4)
 
 
-def _mark_to_market(position: PositionSnapshot, client: AlpacaOptionsClient, as_of: date) -> PositionSnapshot:
+def _slippage_settings(config: dict[str, Any]) -> dict[str, float]:
+    """Return slippage parameters for the backtest.
+
+    ``per_leg_cents`` is a flat $/share cost applied against each leg
+    on entry and exit (so a 4-leg condor pays it 4 times). ``spread_pct``
+    is an additional fraction of (ask - bid) charged on top, modeling
+    fills worse than mid by some fraction of the half-spread. Both
+    default to zero for backwards compatibility; set them via
+    ``config['backtest']['slippage']``.
+    """
+    bt = config.get("backtest", {}) if isinstance(config, dict) else {}
+    raw = bt.get("slippage", {}) if isinstance(bt, dict) else {}
+    if not isinstance(raw, dict):
+        raw = {}
+    return {
+        "per_leg_cents": float(raw.get("per_leg_cents", 0.0)),
+        "spread_pct": float(raw.get("spread_pct", 0.0)),
+        "commission_per_contract": float(raw.get("commission_per_contract", 0.0)),
+    }
+
+
+def _leg_slippage_cost(leg, slip: dict[str, float]) -> float:
+    """Per-leg dollar cost charged at entry or exit.
+
+    ``per_leg_cents`` is a $/share figure. Multiply by 100 (per
+    contract) and the leg quantity. ``spread_pct`` charges that
+    fraction of the bid-ask spread per share. Commissions are flat per
+    contract.
+    """
+    contract = leg.contract
+    qty = max(1, int(leg.qty))
+    spread = max(0.0, float(contract.ask) - float(contract.bid))
+    cost_per_share = slip["per_leg_cents"] + slip["spread_pct"] * spread / 2.0
+    return round(cost_per_share * 100.0 * qty + slip["commission_per_contract"] * qty, 4)
+
+
+def _mark_to_market(
+    position: PositionSnapshot,
+    client: AlpacaOptionsClient,
+    as_of: date,
+    *,
+    slippage: dict[str, float] | None = None,
+) -> PositionSnapshot:
     chain = {contract.contract_symbol: contract for contract in client.get_option_chain(position.underlying, as_of=as_of)}
     close_cost = 0.0
     legs = []
     short_leg_itm = False
+    short_call_extrinsics: list[float] = []
+    slip = slippage or {"per_leg_cents": 0.0, "spread_pct": 0.0, "commission_per_contract": 0.0}
+    exit_slippage = 0.0
     for leg in position.legs:
         contract = chain.get(leg.contract.contract_symbol, leg.contract)
         if leg.side == "sell_to_open":
             close_cost += contract.mid_price() * 100.0 * leg.qty
             short_leg_itm = short_leg_itm or contract.is_itm()
+            if contract.option_type == "call":
+                intrinsic = max(0.0, float(contract.underlying_price) - float(contract.strike))
+                short_call_extrinsics.append(max(0.0, float(contract.mid_price()) - intrinsic))
         else:
             close_cost -= contract.mid_price() * 100.0 * leg.qty
-        legs.append(type(leg)(contract=contract, side=leg.side, qty=leg.qty))
+        refreshed_leg = type(leg)(contract=contract, side=leg.side, qty=leg.qty)
+        legs.append(refreshed_leg)
+        exit_slippage += _leg_slippage_cost(refreshed_leg, slip)
     position.legs = legs  # intentionally mutate the live backtest snapshot
-    position.current_close_cost = round(max(close_cost, 0.0), 2)
+    position.current_close_cost = round(close_cost + exit_slippage, 2)
     position.current_pnl = round(position.entry_credit - position.current_close_cost, 2)
     position.short_leg_itm = short_leg_itm
+    position.remaining_extrinsic_value = (
+        round(min(short_call_extrinsics), 4) if short_call_extrinsics else 0.0
+    )
     return position
 
 
@@ -106,6 +159,7 @@ def run_backtest(
 ) -> tuple[BacktestResult, Path]:
     client = AlpacaOptionsClient(config, use_sample_data=True)
     underlyings = load_underlyings(config)
+    slippage = _slippage_settings(config)
     current_equity = float(starting_fund)
     closed_pnls: list[float] = []
     open_positions: list[PositionSnapshot] = []
@@ -120,14 +174,26 @@ def run_backtest(
             continue
 
         for position in list(open_positions):
-            _mark_to_market(position, client, as_of)
+            _mark_to_market(position, client, as_of, slippage=slippage)
 
         risk_payload = continuous_risk_checks(
             open_positions,
             config=config,
             as_of=datetime.combine(as_of, time(16, 0), tzinfo=timezone.utc),
         )
-        close_ids = {item["strategy_id"] for item in risk_payload["actions"] if item["action"] in {"take_profit", "stop_loss", "time_exit", "close_before_earnings", "close_for_ex_div"}}
+        close_ids = {
+            item["strategy_id"]
+            for item in risk_payload["actions"]
+            if item["action"]
+            in {
+                "take_profit",
+                "stop_loss",
+                "time_exit",
+                "close_before_earnings",
+                "close_for_ex_div",
+                "close_for_calendar_assignment",
+            }
+        }
         if offset == days - 1:
             close_ids.update(position.strategy_id for position in open_positions)
         still_open: list[PositionSnapshot] = []
@@ -183,6 +249,11 @@ def run_backtest(
                     order,
                     opened_at=datetime.combine(as_of, time(10, 0), tzinfo=timezone.utc),
                 )
+                # Charge entry slippage by trimming recorded credit. A
+                # debit position has negative entry_credit; slippage
+                # always increases the cost (less credit / more debit).
+                entry_slippage = sum(_leg_slippage_cost(leg, slippage) for leg in position.legs)
+                position.entry_credit = round(position.entry_credit - entry_slippage, 2)
                 open_positions.append(position)
                 trade_count += 1
                 break
