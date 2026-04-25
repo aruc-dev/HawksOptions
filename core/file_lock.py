@@ -112,25 +112,28 @@ def locked_open(
 def atomic_write_text(path: Path | str, payload: str, *, encoding: str = "utf-8") -> None:
     """Write ``payload`` to ``path`` atomically while holding a lock.
 
-    Uses a per-writer tmp file in the same directory + ``os.replace``
-    for the rename, so readers either see the old or the new file but
-    never a half-written one. The tmp filename includes the pid, the
-    thread id, and a random suffix so two concurrent writers cannot
-    fight over the same scratch file.
+    Uses a stable sibling lock file to serialize writers targeting the
+    same destination, plus a per-writer tmp file in the same directory
+    and ``os.replace`` for the rename, so readers either see the old or
+    the new file but never a half-written one. The tmp filename includes
+    the pid, the thread id, and a random suffix so two concurrent
+    writers cannot fight over the same scratch file.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_name(path.name + ".lock")
     suffix = f".{os.getpid()}.{threading.get_ident()}.{secrets.token_hex(4)}.tmp"
     tmp = path.with_suffix(path.suffix + suffix)
     try:
-        with locked_open(tmp, "w", lock="exclusive", encoding=encoding) as handle:
-            handle.write(payload)
-            handle.flush()
-            try:
-                os.fsync(handle.fileno())
-            except OSError:  # pragma: no cover - some filesystems do not support fsync
-                pass
-        os.replace(tmp, path)
+        with locked_open(lock_path, "a", lock="exclusive", encoding=encoding):
+            with locked_open(tmp, "w", lock="exclusive", encoding=encoding) as handle:
+                handle.write(payload)
+                handle.flush()
+                try:
+                    os.fsync(handle.fileno())
+                except OSError:  # pragma: no cover - some filesystems do not support fsync
+                    pass
+            os.replace(tmp, path)
     finally:
         # Best-effort cleanup if os.replace failed for some reason.
         try:
