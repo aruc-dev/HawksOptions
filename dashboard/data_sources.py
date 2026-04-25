@@ -8,7 +8,7 @@ import logging
 import re
 import subprocess
 from collections import defaultdict, deque
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 

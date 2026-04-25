@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import unittest
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from core.models import OptionContract, OrderLeg, PositionSnapshot, StrategyOrder
-from core.risk_manager import continuous_risk_checks, pre_trade_check
+from core.risk_manager import continuous_risk_checks, identify_elevated_positions, pre_trade_check
 
 
 def _contract(symbol: str, option_type: str = "put", delta: float = -0.2) -> OptionContract:
@@ -367,6 +367,123 @@ class ContinuousRiskTests(unittest.TestCase):
         actions = {item["action"] for item in payload["actions"]}
         self.assertIn("take_profit", actions)
         self.assertIn("roll_review", actions)
+
+    def test_time_exit_uses_simulated_as_of_date(self):
+        current_day = date.today()
+        position = PositionSnapshot(
+            strategy_id="spread-2",
+            strategy_name="vertical_spread",
+            underlying="SPY",
+            legs=[
+                OrderLeg(
+                    contract=OptionContract(
+                        contract_symbol="SPYTEST",
+                        underlying="SPY",
+                        option_type="put",
+                        strike=500.0,
+                        expiration=current_day + timedelta(days=10),
+                        bid=1.0,
+                        ask=1.05,
+                        open_interest=500,
+                        volume=50,
+                        implied_volatility=0.24,
+                        delta=-0.2,
+                        theta=-0.1,
+                        vega=0.2,
+                        gamma=0.01,
+                        underlying_price=520.0,
+                    ),
+                    side="sell_to_open",
+                )
+            ],
+            opened_at=datetime.now(timezone.utc),
+            entry_credit=100.0,
+            max_loss=200.0,
+            profit_take_pct=0.5,
+            loss_stop_multiple=1.5,
+            roll_threshold_delta=-0.4,
+            current_close_cost=90.0,
+            current_pnl=10.0,
+        )
+        simulated_as_of = datetime.combine(current_day - timedelta(days=20), datetime.min.time(), tzinfo=timezone.utc)
+        payload = continuous_risk_checks(
+            [position],
+            config={"gates": {"close_positions_days_before_earnings": 2}, "schedule": {"expiration_exit_cutoff_time": "15:15"}},
+            as_of=simulated_as_of,
+        )
+        actions = {item["action"] for item in payload["actions"]}
+        self.assertNotIn("time_exit", actions)
+
+    def test_debit_position_loss_alert_not_always_tripped(self):
+        """Debit (long premium) positions must not trigger loss_alert when healthy."""
+        position = PositionSnapshot(
+            strategy_id="cal-1",
+            strategy_name="calendar_spread",
+            underlying="SPY",
+            legs=[OrderLeg(contract=_contract("SPY260619P00500000", delta=-0.2), side="buy_to_open")],
+            opened_at=datetime.now(timezone.utc),
+            entry_credit=-100.0,  # debit trade: negative entry_credit
+            max_loss=100.0,
+            profit_take_pct=0.5,
+            loss_stop_multiple=2.0,
+            roll_threshold_delta=None,
+            current_close_cost=50.0,  # well within stop (2x * 100 = 200)
+            current_pnl=-30.0,
+        )
+        elevated = identify_elevated_positions(
+            [position],
+            config={"gates": {"close_positions_days_before_earnings": 2}, "schedule": {"expiration_exit_cutoff_time": "15:15"}},
+            as_of=datetime(2026, 4, 23, tzinfo=timezone.utc),
+        )
+        self.assertNotIn("cal-1", elevated)
+
+    def test_debit_position_stop_loss_fires_when_breached(self):
+        """Debit positions must trigger stop_loss when current_close_cost < entry debit (loss scenario)."""
+        position = PositionSnapshot(
+            strategy_id="cal-2",
+            strategy_name="calendar_spread",
+            underlying="SPY",
+            legs=[OrderLeg(contract=_contract("SPY260619P00500000", delta=-0.2), side="buy_to_open")],
+            opened_at=datetime.now(timezone.utc),
+            entry_credit=-100.0,
+            max_loss=100.0,
+            profit_take_pct=0.5,
+            loss_stop_multiple=1.5,
+            roll_threshold_delta=None,
+            current_close_cost=200.0,  # exceeds abs(entry_credit) * loss_stop_multiple (100 * 1.5 = 150)
+            current_pnl=-200.0,
+        )
+        payload = continuous_risk_checks(
+            [position],
+            config={"gates": {"close_positions_days_before_earnings": 2}, "schedule": {"expiration_exit_cutoff_time": "15:15"}},
+            as_of=datetime(2026, 4, 23, tzinfo=timezone.utc),
+        )
+        actions = {item["action"] for item in payload["actions"]}
+        self.assertIn("stop_loss", actions)
+
+    def test_debit_position_take_profit_not_inverted(self):
+        """Debit positions must not fire take_profit for a P&L of zero or negative."""
+        position = PositionSnapshot(
+            strategy_id="cal-3",
+            strategy_name="calendar_spread",
+            underlying="SPY",
+            legs=[OrderLeg(contract=_contract("SPY260619P00500000", delta=-0.2), side="buy_to_open")],
+            opened_at=datetime.now(timezone.utc),
+            entry_credit=-100.0,
+            max_loss=100.0,
+            profit_take_pct=0.5,
+            loss_stop_multiple=2.0,
+            roll_threshold_delta=None,
+            current_close_cost=80.0,
+            current_pnl=-10.0,
+        )
+        payload = continuous_risk_checks(
+            [position],
+            config={"gates": {"close_positions_days_before_earnings": 2}, "schedule": {"expiration_exit_cutoff_time": "15:15"}},
+            as_of=datetime(2026, 4, 23, tzinfo=timezone.utc),
+        )
+        actions = {item["action"] for item in payload["actions"]}
+        self.assertNotIn("take_profit", actions)
 
 
 if __name__ == "__main__":
