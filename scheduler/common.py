@@ -35,7 +35,7 @@ def current_positions(paths: dict[str, Path]) -> list[PositionSnapshot]:
     return load_positions(paths["positions"])
 
 
-def _short_call_extrinsic(legs, *, as_of: date) -> float:
+def _short_call_extrinsic(legs) -> float:
     """Return the smallest remaining extrinsic across short call legs.
 
     For ex-dividend assignment risk, what matters is whether *any*
@@ -89,7 +89,7 @@ def refresh_positions(
         # close logic (assignment_handler.should_close_short_call_for_ex_div)
         # operates on current data, not the stale 0.0 default.
         position.remaining_extrinsic_value = round(
-            _short_call_extrinsic(refreshed_legs, as_of=as_of), 4
+            _short_call_extrinsic(refreshed_legs), 4
         )
         refreshed.append(position)
     return refreshed
