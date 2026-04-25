@@ -8,7 +8,8 @@ from datetime import date, datetime, time, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from core.assignment_handler import should_close_short_call_for_ex_div
+from core.assignment_handler import calendar_front_assignment_risk, should_close_short_call_for_ex_div
+from core.file_lock import atomic_write_text, locked_open
 from core.models import OptionContract, PositionSnapshot, StrategyOrder
 
 
@@ -183,18 +184,22 @@ def identify_elevated_positions(
     as_of = as_of or datetime.now(timezone.utc)
     cutoff_text = str(config.get("schedule", {}).get("expiration_exit_cutoff_time", "15:15"))
     cutoff_hour, cutoff_minute = [int(part) for part in cutoff_text.split(":", 1)]
+    gates_cfg = config.get("gates", {})
+    calendar_slippage = float(gates_cfg.get("calendar_assignment_slippage", 0.05))
+    time_exit_dte = int(gates_cfg.get("time_exit_dte", 21))
     flagged: list[str] = []
     for position in positions:
         loss_alert = position.current_close_cost >= (position.entry_credit * max(position.loss_stop_multiple * 0.75, 0.0))
         earnings_days = _days_until(position.next_earnings_date, as_of.date())
         if (
-            position.days_to_expiration <= 21
+            position.days_to_expiration <= time_exit_dte
             or position.short_leg_itm
             or (
                 position.roll_threshold_delta is not None
                 and abs(position.short_delta) >= abs(position.roll_threshold_delta)
             )
             or should_close_short_call_for_ex_div(position, as_of=as_of.date())
+            or calendar_front_assignment_risk(position, slippage=calendar_slippage)
             or (earnings_days is not None and earnings_days <= int(config.get("gates", {}).get("close_positions_days_before_earnings", 2)))
             or loss_alert
             or (
@@ -214,6 +219,8 @@ def continuous_risk_checks(
 ) -> dict[str, Any]:
     as_of = as_of or datetime.now(timezone.utc)
     gates = config.get("gates", {})
+    calendar_slippage = float(gates.get("calendar_assignment_slippage", 0.05))
+    time_exit_dte = int(gates.get("time_exit_dte", 21))
     actions: list[dict[str, Any]] = []
     positions = list(positions)
     elevated = set(identify_elevated_positions(positions, config=config, as_of=as_of))
@@ -224,10 +231,14 @@ def continuous_risk_checks(
             actions.append({"strategy_id": position.strategy_id, "action": "stop_loss"})
         if position.roll_threshold_delta is not None and abs(position.short_delta) >= abs(position.roll_threshold_delta):
             actions.append({"strategy_id": position.strategy_id, "action": "roll_review"})
-        if position.days_to_expiration <= 21:
+        if position.days_to_expiration <= time_exit_dte:
             actions.append({"strategy_id": position.strategy_id, "action": "time_exit"})
         if should_close_short_call_for_ex_div(position, as_of=as_of.date()):
             actions.append({"strategy_id": position.strategy_id, "action": "close_for_ex_div"})
+        if calendar_front_assignment_risk(position, slippage=calendar_slippage):
+            actions.append(
+                {"strategy_id": position.strategy_id, "action": "close_for_calendar_assignment"}
+            )
         earnings_days = _days_until(position.next_earnings_date, as_of.date())
         if earnings_days is not None and earnings_days <= int(gates.get("close_positions_days_before_earnings", 2)):
             actions.append({"strategy_id": position.strategy_id, "action": "close_before_earnings"})
@@ -261,7 +272,7 @@ def daily_loss_status(
 def read_daily_baseline(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
-    with open(path, "r", encoding="utf-8") as handle:
+    with locked_open(path, "r", lock="shared") as handle:
         return json.load(handle)
 
 
@@ -273,9 +284,7 @@ def write_daily_baseline(path: Path, portfolio_value: float, *, as_of: datetime 
         "created_at": as_of.isoformat(timespec="seconds"),
         "session_timezone": "America/New_York",
     }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2)
+    atomic_write_text(path, json.dumps(payload, indent=2))
     return payload
 
 
@@ -288,6 +297,5 @@ def write_greeks_snapshot(
     as_of = as_of or datetime.now(timezone.utc)
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{as_of:%Y%m%d-%H%M%S}.json"
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2)
+    atomic_write_text(path, json.dumps(payload, indent=2))
     return path

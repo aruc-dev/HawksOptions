@@ -24,6 +24,10 @@ gates:
   close_positions_days_before_earnings: 2
   min_iv_rank_for_short_premium: 30
   max_iv_rank_for_long_premium: 40
+  # Calendar spreads: flag for close when the front short leg's mid
+  # falls within this many dollars per share of intrinsic value
+  # (early-assignment risk).
+  calendar_assignment_slippage: 0.05
 
 underlyings:
   source: config/underlyings.yaml
@@ -33,6 +37,15 @@ market_data:
   use_sample_data: true
   risk_free_rate: 0.045
   default_dividend_yield: 0.0
+
+backtest:
+  # Slippage and commission applied per leg on both entry and exit.
+  # Defaults are zero so existing backtests reproduce; turn these on
+  # for realistic projections.
+  slippage:
+    per_leg_cents: 0.02            # $/share per leg ($2 per contract)
+    spread_pct: 0.50               # fraction of half-spread paid per leg
+    commission_per_contract: 0.65  # flat $/contract commission
 
 strategies:
   cash_secured_put:

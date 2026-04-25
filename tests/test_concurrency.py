@@ -1,0 +1,197 @@
+"""Concurrency tests for shared state files.
+
+These tests simulate the production scheduler topology where a 1-min,
+5-min, and 30-min job may all touch positions.json or trade_log.csv at
+the same time. Without locking those files were vulnerable to
+interleaved or duplicated writes (header lines, half-written JSON).
+The locking added in core/file_lock.py and threaded through
+core/order_executor.py and core/trade_log.py should keep the files
+valid under contention.
+
+We use multiprocessing because thread-level locks would not catch
+fcntl/flock edge cases — flock works at the process level.
+"""
+
+from __future__ import annotations
+
+import csv
+import json
+import multiprocessing
+import os
+import tempfile
+import time
+import unittest
+from datetime import datetime, timezone
+from pathlib import Path
+
+from core.iv_rank_tracker import append_iv_snapshot, prune_iv_history
+from core.order_executor import load_positions, save_positions
+from core.trade_log import TRADE_LOG_FIELDS, append_trade_rows, read_trade_rows
+
+
+def _append_trade_worker(args):
+    path, batch_id, n = args
+    rows = [
+        {
+            "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "mode": "paper",
+            "strategy": "vertical_spread",
+            "underlying": "SPY",
+            "strategy_id": f"batch-{batch_id}",
+            "leg_number": i,
+            "contract_symbol": f"SYM-{batch_id}-{i}",
+            "option_type": "put",
+            "strike": 500.0,
+            "expiration": "2026-06-19",
+            "dte_at_entry": 30,
+            "side": "sell_to_open",
+            "qty": 1,
+            "entry_price": 1.0,
+            "credit_received_per_spread": 50.0,
+            "max_loss_per_spread": 200.0,
+            "stop_loss": 75.0,
+            "take_profit": 25.0,
+            "order_id": f"order-{batch_id}-{i}",
+            "status": "open",
+        }
+        for i in range(n)
+    ]
+    append_trade_rows(path, rows)
+    return batch_id
+
+
+def _save_positions_worker(args):
+    path, payload = args
+    # Re-import inside the worker so multiprocessing on macOS (spawn)
+    # can pickle.
+    from core.models import OptionContract, OrderLeg, PositionSnapshot
+    from datetime import date
+
+    positions = []
+    for entry in payload:
+        contract = OptionContract(
+            contract_symbol=entry["sym"],
+            underlying=entry["und"],
+            option_type="put",
+            strike=500.0,
+            expiration=date(2026, 6, 19),
+            bid=1.0,
+            ask=1.05,
+        )
+        positions.append(
+            PositionSnapshot(
+                strategy_id=entry["sym"],
+                strategy_name="vertical_spread",
+                underlying=entry["und"],
+                legs=[OrderLeg(contract=contract, side="sell_to_open")],
+                opened_at=datetime.now(timezone.utc),
+                entry_credit=50.0,
+                max_loss=200.0,
+                profit_take_pct=0.5,
+                loss_stop_multiple=2.0,
+                roll_threshold_delta=-0.4,
+            )
+        )
+    save_positions(Path(path), positions)
+    return entry["sym"]
+
+
+def _append_iv_worker(args):
+    path, symbol, n = args
+    for i in range(n):
+        append_iv_snapshot(Path(path), symbol, 0.20 + 0.001 * i)
+    return symbol
+
+
+class ConcurrencyTests(unittest.TestCase):
+    def test_concurrent_trade_log_appends_keep_one_header(self):
+        """Multiple processes appending simultaneously must produce a
+        single header row and the expected total row count."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "trades.csv"
+            n_workers = 6
+            n_rows = 5
+            ctx = multiprocessing.get_context("spawn")
+            with ctx.Pool(processes=n_workers) as pool:
+                pool.map(
+                    _append_trade_worker,
+                    [(path, idx, n_rows) for idx in range(n_workers)],
+                )
+            rows = read_trade_rows(path)
+            # Total rows = workers * rows_per_worker.
+            self.assertEqual(len(rows), n_workers * n_rows)
+            # Verify the file has exactly one header line.
+            with open(path, "r", encoding="utf-8") as handle:
+                first_line = handle.readline().strip()
+            self.assertEqual(first_line, ",".join(TRADE_LOG_FIELDS))
+            # All rows have valid status values (no torn writes).
+            for row in rows:
+                self.assertEqual(row["status"], "open")
+
+    def test_concurrent_positions_writes_remain_valid_json(self):
+        """save_positions uses atomic_write_text under an exclusive
+        lock. After many concurrent writes the file must still parse
+        as a JSON list."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "positions.json"
+            payloads = [
+                [{"sym": f"S{idx}-{i}", "und": f"U{idx}"} for i in range(3)]
+                for idx in range(8)
+            ]
+            ctx = multiprocessing.get_context("spawn")
+            with ctx.Pool(processes=4) as pool:
+                pool.map(_save_positions_worker, [(str(path), p) for p in payloads])
+            # Whatever ended up on disk must be a valid list of
+            # PositionSnapshot dicts. We don't care which writer won
+            # — only that the file isn't half-written.
+            loaded = load_positions(path)
+            self.assertIsInstance(loaded, list)
+            # The file must be parseable as JSON too.
+            with open(path, "r", encoding="utf-8") as handle:
+                parsed = json.load(handle)
+            self.assertIsInstance(parsed, list)
+
+    def test_concurrent_iv_snapshot_appends(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "iv.csv"
+            ctx = multiprocessing.get_context("spawn")
+            with ctx.Pool(processes=4) as pool:
+                pool.map(
+                    _append_iv_worker,
+                    [(str(path), "SPY", 10), (str(path), "QQQ", 10), (str(path), "IWM", 10), (str(path), "DIA", 10)],
+                )
+            with open(path, "r", encoding="utf-8") as handle:
+                rows = list(csv.reader(handle))
+            # 1 header + 40 data rows.
+            self.assertEqual(len(rows), 41)
+            self.assertEqual(rows[0], ["timestamp", "symbol", "implied_volatility"])
+
+    def test_iv_history_pruning(self):
+        """prune_iv_history drops rows older than the cutoff and
+        preserves recent ones. Atomic rewrite must keep the file
+        readable throughout."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "iv.csv"
+            now = datetime.now(timezone.utc)
+            # Manually craft history with a mix of old and new rows.
+            with open(path, "w", encoding="utf-8", newline="") as handle:
+                writer = csv.writer(handle)
+                writer.writerow(["timestamp", "symbol", "implied_volatility"])
+                # Old row (400 days ago).
+                writer.writerow([
+                    (now.replace(year=now.year - 2)).isoformat(timespec="seconds"),
+                    "SPY",
+                    "0.18",
+                ])
+                # Recent row.
+                writer.writerow([now.isoformat(timespec="seconds"), "SPY", "0.22"])
+            dropped = prune_iv_history(path, max_age_days=365)
+            self.assertEqual(dropped, 1)
+            with open(path, "r", encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["implied_volatility"], "0.22")
+
+
+if __name__ == "__main__":
+    unittest.main()
