@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import unittest
-from dataclasses import replace
 from datetime import date, datetime, timezone
 
 from core.assignment_handler import detect_assignments, should_close_short_call_for_ex_div
