@@ -52,11 +52,10 @@ def calendar_front_assignment_risk(
     to early assignment.
 
     A calendar spread is only defined-risk if held through front
-    expiration. If the short front leg's mid trades at or below its
-    intrinsic value (within a small slippage band), holders of the
-    long side have an incentive to exercise, leaving us long the
-    naked back leg. We treat that condition as a flag-for-close
-    signal.
+    expiration. If the ITM short front leg's mid trades at or below
+    its intrinsic value (within a small slippage band), holders of the
+    long side have an incentive to exercise, leaving us long the naked
+    back leg. We treat that condition as a flag-for-close signal.
 
     The slippage band defaults to $0.05 per share (= $5 per contract);
     callers can pass a config-driven value.
@@ -75,7 +74,11 @@ def calendar_front_assignment_risk(
         if contract.option_type == "call"
         else max(0.0, float(contract.strike) - float(contract.underlying_price))
     )
+    if not contract.is_itm() or intrinsic <= 0.0:
+        return False
     mid = float(contract.mid_price())
+    if mid <= 0.0:
+        return False
     # If the option trades at intrinsic or below (within slippage), an
     # arbitrageur would exercise; we want out before that happens.
     return mid <= intrinsic + max(0.0, float(slippage))

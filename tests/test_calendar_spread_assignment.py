@@ -17,14 +17,16 @@ def _calendar_position(*, front_mid: float, underlying: float = 105.0, strike: f
     same strike. ``front_mid`` is set via bid/ask so ``mid_price``
     returns the desired value.
     """
+    front_bid = max(0.0, front_mid - 0.05)
+    front_ask = max(0.0, front_mid + 0.05) if front_mid > 0.0 else 0.0
     front = OptionContract(
         contract_symbol="XYZ260619C00100000",
         underlying="XYZ",
         option_type="call",
         strike=strike,
         expiration=date(2026, 6, 19),
-        bid=front_mid - 0.05,
-        ask=front_mid + 0.05,
+        bid=front_bid,
+        ask=front_ask,
         underlying_price=underlying,
     )
     back = OptionContract(
@@ -78,6 +80,18 @@ class CalendarFrontAssignmentRiskTests(unittest.TestCase):
         # Underlying below strike -> intrinsic 0; front mid > 0 means
         # the option still has time value.
         position = _calendar_position(front_mid=1.50, underlying=95.0)
+        self.assertFalse(calendar_front_assignment_risk(position))
+
+    def test_no_flag_for_otm_calendar_with_missing_quote(self):
+        # Missing quotes on an OTM front leg produce mid=0, but zero
+        # time value is not assignment signal unless the leg is ITM.
+        position = _calendar_position(front_mid=0.0, underlying=95.0)
+        self.assertFalse(calendar_front_assignment_risk(position))
+
+    def test_no_flag_for_itm_calendar_with_missing_quote(self):
+        # A zero quote on an ITM front leg is stale/missing market data,
+        # not a reliable intrinsic-parity signal.
+        position = _calendar_position(front_mid=0.0, underlying=105.0)
         self.assertFalse(calendar_front_assignment_risk(position))
 
     def test_only_applies_to_calendar_spreads(self):
