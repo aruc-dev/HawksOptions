@@ -8,9 +8,9 @@ from typing import Any
 
 import yaml
 
+from core.config import resolve_config_path
+
 BASE_DIR = Path(__file__).resolve().parent.parent
-CONFIG_PATH = BASE_DIR / "config" / "config.yaml"
-LOCAL_CONFIG_PATH = BASE_DIR / "config" / "config.local.yaml"
 
 AUTH_MODE_LOCAL = "local"
 AUTH_MODE_CLOUDFLARE = "cloudflare"
@@ -19,9 +19,7 @@ VALID_AUTH_MODES = {AUTH_MODE_LOCAL, AUTH_MODE_CLOUDFLARE}
 
 class DashboardConfig:
     def __init__(self, config_path: Path | None = None) -> None:
-        self.config_path = config_path if config_path is not None else (
-            LOCAL_CONFIG_PATH if LOCAL_CONFIG_PATH.exists() else CONFIG_PATH
-        )
+        self.config_path = resolve_config_path(config_path)
         self._cached: dict[str, Any] | None = None
 
     def _load(self) -> dict[str, Any]:

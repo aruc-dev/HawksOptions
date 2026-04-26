@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -13,10 +14,24 @@ CONFIG_PATH = BASE_DIR / "config" / "config.yaml"
 LOCAL_CONFIG_PATH = BASE_DIR / "config" / "config.local.yaml"
 
 
-def _resolve_config_path(path: Path | None) -> Path:
+def resolve_config_path(path: Path | None = None) -> Path:
+    """Return the config file path to use.
+
+    Resolution order:
+    1. *path* — if an explicit path is supplied it is returned as-is.
+    2. ``LOCAL_CONFIG_PATH`` — only when the ``HAWKS_USE_LOCAL_CONFIG``
+       environment variable is set to a non-empty value **and** the file
+       exists on disk.
+    3. ``CONFIG_PATH`` — the committed reference config.
+
+    Gating behind the env var prevents a developer's uncommitted
+    ``config.local.yaml`` from silently changing test behaviour.
+    """
     if path is not None:
         return path
-    return LOCAL_CONFIG_PATH if LOCAL_CONFIG_PATH.exists() else CONFIG_PATH
+    if os.environ.get("HAWKS_USE_LOCAL_CONFIG") and LOCAL_CONFIG_PATH.exists():
+        return LOCAL_CONFIG_PATH
+    return CONFIG_PATH
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
@@ -28,7 +43,7 @@ def load_yaml(path: Path) -> dict[str, Any]:
 
 
 def load_config(path: Path | None = None) -> dict[str, Any]:
-    config = load_yaml(_resolve_config_path(path))
+    config = load_yaml(resolve_config_path(path))
     config.setdefault("mode", "paper")
     config.setdefault("account", {})
     config.setdefault("gates", {})
