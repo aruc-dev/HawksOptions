@@ -32,7 +32,7 @@ import os
 import threading
 import urllib.error
 import urllib.request
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any
 
 OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
@@ -72,7 +72,7 @@ class _SpendTracker:
         self._spent_usd: float = 0.0
 
     def _roll_if_new_day(self) -> None:
-        today = date.today()
+        today = datetime.now(timezone.utc).date()
         if self._date != today:
             self._date = today
             self._spent_usd = 0.0
@@ -94,7 +94,7 @@ class _SpendTracker:
 
     def reset(self) -> None:
         with self._lock:
-            self._date = date.today()
+            self._date = datetime.now(timezone.utc).date()
             self._spent_usd = 0.0
 
 

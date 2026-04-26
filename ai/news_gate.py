@@ -20,15 +20,22 @@ RISK_KEYWORDS = {
 def evaluate_news_gate(headlines: Iterable[str], veto_threshold: float = 0.7) -> dict[str, object]:
     score = 0
     matches = []
+    matched_headlines = []
     for headline in headlines:
-        lowered = str(headline).lower()
+        text = str(headline)
+        lowered = text.lower()
+        matched = False
         for keyword in RISK_KEYWORDS:
             if keyword in lowered:
                 score += 1
                 matches.append(keyword)
+                matched = True
+        if matched:
+            matched_headlines.append(text)
     confidence = min(1.0, score / 3.0)
     return {
         "veto": confidence >= veto_threshold,
         "confidence": round(confidence, 2),
         "reason": ", ".join(sorted(set(matches))) if matches else "no material risk keyword match",
+        "matched_headlines": matched_headlines,
     }

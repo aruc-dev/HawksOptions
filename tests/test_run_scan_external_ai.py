@@ -105,6 +105,14 @@ class NewsGateWiringTests(unittest.TestCase):
             env={"NEWS_API_KEY": "test-key"},
         )
         self.assertTrue(result["veto_reason"].startswith("news_gate:"))
+        self.assertEqual(
+            result["news"]["matched_headlines"],
+            [
+                "AAPL hit with FDA investigation",
+                "Apple lawsuit and fraud probe widens",
+                "CEO resigns abruptly",
+            ],
+        )
 
 
 class LlmCriticWiringTests(unittest.TestCase):
@@ -190,6 +198,32 @@ class LlmCriticWiringTests(unittest.TestCase):
         self.assertTrue(result["veto_reason"].startswith("llm_critic:"))
         self.assertIn("earnings tomorrow", result["veto_reason"])
 
+    def test_llm_receives_matched_news_headlines(self):
+        config = self._enabled_config()
+        config["ai"]["news_gate"]["enabled"] = True
+        captured = {}
+
+        def fake_fetcher(symbol, **_kw):
+            return [
+                f"{symbol} FDA investigation expands",
+                f"{symbol} announces product launch",
+            ]
+
+        def fake_llm(_order, **kw):
+            captured["headlines"] = kw["headlines"]
+            return {"severity": "none", "concerns": []}
+
+        result = evaluate_external_ai(
+            _csp_order(),
+            config=config,
+            structural_severity="none",
+            fetcher=fake_fetcher,
+            llm=fake_llm,
+            env={"NEWS_API_KEY": "news-key", "OPENAI_API_KEY": "sk-test"},
+        )
+        self.assertEqual(result["veto_reason"], "")
+        self.assertEqual(captured["headlines"], ["AAPL FDA investigation expands"])
+
     def test_llm_minor_does_not_veto(self):
         config = self._enabled_config()
 
@@ -260,7 +294,10 @@ class VetoOnlyInvariantTests(unittest.TestCase):
             }
         }
 
+        called = []
+
         def fake_llm(*_a, **_kw):
+            called.append("llm")
             return {"severity": "none", "concerns": []}
 
         result = evaluate_external_ai(
@@ -274,6 +311,33 @@ class VetoOnlyInvariantTests(unittest.TestCase):
         # ai_veto_reason set from the structural critic and the wiring
         # in scan_market preserves it.
         self.assertEqual(result["veto_reason"], "")
+        self.assertEqual(called, [])
+
+    def test_structural_major_skips_news_fetch(self):
+        config = {
+            "ai": {
+                "enabled": True,
+                "provider": "openai",
+                "news_gate": {"enabled": True},
+                "trade_idea_critic": {"enabled": True, "veto_on": "major_concern"},
+            }
+        }
+        called = []
+
+        def fake_fetcher(*_a, **_kw):
+            called.append("news")
+            return ["AAPL lawsuit"]
+
+        result = evaluate_external_ai(
+            _csp_order(),
+            config=config,
+            structural_severity="major",
+            fetcher=fake_fetcher,
+            llm=lambda *_a, **_kw: {"severity": "major", "concerns": ["x"]},
+            env={"NEWS_API_KEY": "news-key", "OPENAI_API_KEY": "sk-test"},
+        )
+        self.assertEqual(result["veto_reason"], "")
+        self.assertEqual(called, [])
 
 
 if __name__ == "__main__":  # pragma: no cover

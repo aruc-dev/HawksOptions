@@ -103,6 +103,8 @@ def evaluate_external_ai(
     critic_cfg = _subsection(ai_cfg, "trade_idea_critic")
 
     result: dict[str, Any] = {"veto_reason": "", "news": None, "llm": None}
+    if structural_severity == "major":
+        return result
 
     # ---- News gate ------------------------------------------------------
     # The news gate is independent of the master ``ai.enabled`` switch:
@@ -188,11 +190,13 @@ def scan_market(*, config: dict[str, Any], as_of: date | None = None, dry_run: b
             structural_severity = str(critique.get("severity", "none"))
             if structural_severity == "major":
                 order.ai_veto_reason = "trade_critic_major_concern"
-            external = evaluate_external_ai(
-                order,
-                config=config,
-                structural_severity=structural_severity,
-            )
+            external = {"veto_reason": "", "news": None, "llm": None}
+            if not order.ai_veto_reason:
+                external = evaluate_external_ai(
+                    order,
+                    config=config,
+                    structural_severity=structural_severity,
+                )
             external_reason = str(external.get("veto_reason") or "")
             if external_reason and not order.ai_veto_reason:
                 # Veto-only: external checks can add a veto reason but
