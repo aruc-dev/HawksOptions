@@ -82,7 +82,7 @@ def refresh_positions(
             else:
                 close_cost -= contract.mid_price() * 100.0 * leg.qty
         position.legs = refreshed_legs
-        position.current_close_cost = round(max(close_cost, 0.0), 2)
+        position.current_close_cost = round(close_cost, 2)
         position.current_pnl = round(position.entry_credit - position.current_close_cost, 2)
         position.short_leg_itm = short_leg_itm
         # Recompute remaining extrinsic on short calls so the ex-div

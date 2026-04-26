@@ -23,8 +23,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import core.file_lock as file_lock
-from core.iv_rank_tracker import append_iv_snapshot, prune_iv_history
-from core.order_executor import load_positions, save_positions
+from core.iv_rank_tracker import append_iv_snapshot, load_iv_history, prune_iv_history
+from core.order_executor import load_positions, persist_open_order, save_positions
 from core.trade_log import TRADE_LOG_FIELDS, append_trade_rows, read_trade_rows
 
 
@@ -95,6 +95,46 @@ def _save_positions_worker(args):
     return entry["sym"]
 
 
+def _persist_order_worker(args):
+    trade_log_path, positions_path, idx = args
+    from core.models import OptionContract, OrderLeg, StrategyOrder
+    from datetime import date
+
+    contract = OptionContract(
+        contract_symbol=f"SPY260619P00{idx:06d}",
+        underlying="SPY",
+        option_type="put",
+        strike=500.0 + idx,
+        expiration=date(2026, 6, 19),
+        bid=1.0,
+        ask=1.05,
+        open_interest=500,
+        volume=50,
+        underlying_price=520.0,
+    )
+    order = StrategyOrder(
+        strategy_name="vertical_spread",
+        strategy_id=f"persist-{idx}",
+        underlying="SPY",
+        legs=[OrderLeg(contract=contract, side="sell_to_open")],
+        max_loss=200.0,
+        max_profit=100.0,
+        required_buying_power=200.0,
+        profit_take_pct=0.5,
+        loss_stop_multiple=2.0,
+        roll_threshold_delta=-0.4,
+        iv_rank=50.0,
+    )
+    persist_open_order(
+        order=order,
+        mode="paper",
+        order_id=f"order-{idx}",
+        trade_log_path=Path(trade_log_path),
+        positions_path=Path(positions_path),
+    )
+    return idx
+
+
 def _append_iv_worker(args):
     path, symbol, n = args
     for i in range(n):
@@ -122,6 +162,45 @@ class ConcurrencyTests(unittest.TestCase):
                 file_lock._release = original_release
 
             self.assertEqual(observed_sizes, [1])
+
+    def test_locked_open_write_mode_truncates_after_locking(self):
+        """Opening in write mode must not truncate before the lock is acquired."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "locked.txt"
+            path.write_text("existing", encoding="utf-8")
+            observed_payloads: list[str] = []
+            original_acquire = file_lock._acquire
+
+            def acquire_with_payload_check(handle, mode):
+                observed_payloads.append(path.read_text(encoding="utf-8"))
+                original_acquire(handle, mode)
+
+            file_lock._acquire = acquire_with_payload_check
+            try:
+                with file_lock.locked_open(path, "w", lock="exclusive") as handle:
+                    handle.write("replacement")
+            finally:
+                file_lock._acquire = original_acquire
+
+            self.assertEqual(observed_payloads, ["existing"])
+            self.assertEqual(path.read_text(encoding="utf-8"), "replacement")
+
+    def test_iv_append_waits_for_history_sidecar_lock(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "iv.csv"
+            with file_lock.locked_open(file_lock.lock_path_for(path), "a", lock="exclusive"):
+                process = multiprocessing.Process(
+                    target=_append_iv_worker,
+                    args=((str(path), "SPY", 1),),
+                )
+                process.start()
+                process.join(0.25)
+                blocked_on_lock = process.is_alive()
+
+            process.join(5)
+            self.assertTrue(blocked_on_lock)
+            self.assertEqual(process.exitcode, 0)
+            self.assertEqual(load_iv_history(path, "SPY"), [0.2])
 
     def test_concurrent_trade_log_appends_keep_one_header(self):
         """Multiple processes appending simultaneously must produce a
@@ -171,6 +250,25 @@ class ConcurrencyTests(unittest.TestCase):
             with open(path, "r", encoding="utf-8") as handle:
                 parsed = json.load(handle)
             self.assertIsInstance(parsed, list)
+
+    def test_concurrent_persist_open_order_keeps_all_positions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            trade_log_path = Path(tmp) / "trades.csv"
+            positions_path = Path(tmp) / "positions.json"
+            n_workers = 8
+            ctx = multiprocessing.get_context("spawn")
+            with ctx.Pool(processes=4) as pool:
+                pool.map(
+                    _persist_order_worker,
+                    [(str(trade_log_path), str(positions_path), idx) for idx in range(n_workers)],
+                )
+
+            positions = load_positions(positions_path)
+            self.assertEqual(len(positions), n_workers)
+            self.assertEqual(
+                {position.strategy_id for position in positions},
+                {f"persist-{idx}" for idx in range(n_workers)},
+            )
 
     def test_concurrent_iv_snapshot_appends(self):
         with tempfile.TemporaryDirectory() as tmp:

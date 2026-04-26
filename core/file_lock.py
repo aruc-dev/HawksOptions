@@ -53,6 +53,12 @@ LockMode = Literal["shared", "exclusive"]
 _LOCK_NBYTES = 4096
 
 
+def lock_path_for(path: Path | str) -> Path:
+    """Return the sidecar lock path shared by all operations on ``path``."""
+    path = Path(path)
+    return path.with_name(path.name + ".lock")
+
+
 def _acquire(handle: IO, mode: LockMode) -> None:
     if _HAS_FCNTL:
         flag = fcntl.LOCK_SH if mode == "shared" else fcntl.LOCK_EX
@@ -108,9 +114,18 @@ def locked_open(
     elif newline is not None:
         # Binary mode does not accept newline.
         pass
-    handle = open(path, mode, **open_kwargs)
+    truncate_after_lock = "w" in mode
+    if truncate_after_lock:
+        fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o666)
+        locked_mode = "r+b" if "b" in mode else "r+"
+        handle = open(fd, locked_mode, closefd=True, **open_kwargs)
+    else:
+        handle = open(path, mode, **open_kwargs)
     try:
         _acquire(handle, lock)
+        if truncate_after_lock:
+            handle.seek(0)
+            handle.truncate(0)
         yield handle
     finally:
         try:
@@ -121,7 +136,13 @@ def locked_open(
             handle.close()
 
 
-def atomic_write_text(path: Path | str, payload: str, *, encoding: str = "utf-8") -> None:
+def atomic_write_text(
+    path: Path | str,
+    payload: str,
+    *,
+    encoding: str = "utf-8",
+    lock: bool = True,
+) -> None:
     """Write ``payload`` to ``path`` atomically while holding a lock.
 
     Uses a stable sibling lock file to serialize writers targeting the
@@ -133,19 +154,26 @@ def atomic_write_text(path: Path | str, payload: str, *, encoding: str = "utf-8"
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = path.with_name(path.name + ".lock")
     suffix = f".{os.getpid()}.{threading.get_ident()}.{secrets.token_hex(4)}.tmp"
     tmp = path.with_suffix(path.suffix + suffix)
+    lock_path = lock_path_for(path)
+
+    def write_tmp_and_replace() -> None:
+        with locked_open(tmp, "w", lock="exclusive", encoding=encoding) as handle:
+            handle.write(payload)
+            handle.flush()
+            try:
+                os.fsync(handle.fileno())
+            except OSError:  # pragma: no cover - some filesystems do not support fsync
+                pass
+        os.replace(tmp, path)
+
     try:
-        with locked_open(lock_path, "a", lock="exclusive", encoding=encoding):
-            with locked_open(tmp, "w", lock="exclusive", encoding=encoding) as handle:
-                handle.write(payload)
-                handle.flush()
-                try:
-                    os.fsync(handle.fileno())
-                except OSError:  # pragma: no cover - some filesystems do not support fsync
-                    pass
-            os.replace(tmp, path)
+        if lock:
+            with locked_open(lock_path, "a", lock="exclusive", encoding=encoding):
+                write_tmp_and_replace()
+        else:
+            write_tmp_and_replace()
     finally:
         # Best-effort cleanup if os.replace failed for some reason.
         try:
