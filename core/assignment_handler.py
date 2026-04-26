@@ -5,7 +5,17 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Iterable
 
-from core.models import PositionSnapshot
+from core.models import OrderLeg, PositionSnapshot
+
+
+def _itm_short_call_legs(legs: Iterable[OrderLeg]) -> list[OrderLeg]:
+    return [
+        leg
+        for leg in legs
+        if leg.side == "sell_to_open"
+        and leg.contract.option_type == "call"
+        and leg.contract.is_itm()
+    ]
 
 
 def should_close_short_call_for_ex_div(
@@ -25,14 +35,8 @@ def should_close_short_call_for_ex_div(
         return False
     if position.ex_dividend_date > (as_of + timedelta(days=1)):
         return False
-    # Only short calls are at risk of early exercise for the dividend.
-    has_short_call = any(
-        leg.side == "sell_to_open" and leg.contract.option_type == "call"
-        for leg in position.legs
-    )
-    if not has_short_call:
-        return False
-    if not position.short_leg_itm:
+    # Only ITM short calls are at risk of early exercise for the dividend.
+    if not _itm_short_call_legs(position.legs):
         return False
     if position.dividend_amount <= 0:
         return False

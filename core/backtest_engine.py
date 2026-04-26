@@ -112,7 +112,7 @@ def _mark_to_market(
         if leg.side == "sell_to_open":
             close_cost += contract.mid_price() * 100.0 * leg.qty
             short_leg_itm = short_leg_itm or contract.is_itm()
-            if contract.option_type == "call":
+            if contract.option_type == "call" and contract.is_itm():
                 intrinsic = max(0.0, float(contract.underlying_price) - float(contract.strike))
                 short_call_extrinsics.append(max(0.0, float(contract.mid_price()) - intrinsic))
         else:

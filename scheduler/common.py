@@ -36,13 +36,15 @@ def current_positions(paths: dict[str, Path]) -> list[PositionSnapshot]:
 
 
 def _short_call_extrinsic(legs) -> float:
-    """Return the smallest remaining extrinsic across short call legs.
+    """Return the smallest remaining extrinsic across ITM short call legs.
 
     For ex-dividend assignment risk, what matters is whether *any*
     short call has dividend > extrinsic. Picking the minimum across the
     short call legs gives the conservative (closest to assignment)
-    value. Returns 0.0 if there are no short call legs (the ex-div
-    handler will short-circuit on ``short_leg_itm`` anyway).
+    value. Returns 0.0 if there are no ITM short call legs; the ex-div
+    handler should only act when there is an in-the-money short call,
+    so the no-ITM-short-call case is ignored by that call-specific
+    gating.
     """
     extrinsic_values: list[float] = []
     for leg in legs:
@@ -50,6 +52,8 @@ def _short_call_extrinsic(legs) -> float:
             continue
         contract = leg.contract
         if contract.option_type != "call":
+            continue
+        if not contract.is_itm():
             continue
         intrinsic = max(0.0, float(contract.underlying_price) - float(contract.strike))
         mid = float(contract.mid_price())

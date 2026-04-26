@@ -8,22 +8,27 @@ from core.models import OptionContract, OrderLeg, PositionSnapshot
 
 
 def _position(**overrides) -> PositionSnapshot:
+    contract_overrides = overrides.pop("contract_overrides", {})
+    contract_kwargs = {
+        "contract_symbol": "AAPL260619C00210000",
+        "underlying": "AAPL",
+        "option_type": "call",
+        "strike": 210.0,
+        "expiration": date(2026, 6, 19),
+        "bid": 1.0,
+        "ask": 1.1,
+        "open_interest": 500,
+        "volume": 30,
+        "implied_volatility": 0.25,
+        "delta": 0.48,
+        "theta": -0.1,
+        "vega": 0.2,
+        "gamma": 0.01,
+        "underlying_price": 215.0,
+    }
+    contract_kwargs.update(contract_overrides)
     contract = OptionContract(
-        contract_symbol="AAPL260619C00210000",
-        underlying="AAPL",
-        option_type="call",
-        strike=210.0,
-        expiration=date(2026, 6, 19),
-        bid=1.0,
-        ask=1.1,
-        open_interest=500,
-        volume=30,
-        implied_volatility=0.25,
-        delta=0.48,
-        theta=-0.1,
-        vega=0.2,
-        gamma=0.01,
-        underlying_price=215.0,
+        **contract_kwargs,
     )
     base = PositionSnapshot(
         strategy_id="cc-1",
@@ -125,7 +130,52 @@ class AssignmentHandlerTests(unittest.TestCase):
         )
 
     def test_no_close_when_short_leg_otm(self):
-        position = _position(short_leg_itm=False)
+        position = _position(contract_overrides={"underlying_price": 205.0})
+        self.assertFalse(
+            should_close_short_call_for_ex_div(position, as_of=date(2026, 4, 23))
+        )
+
+    def test_no_close_when_only_short_put_is_itm(self):
+        short_call = OptionContract(
+            contract_symbol="AAPL260619C00220000",
+            underlying="AAPL",
+            option_type="call",
+            strike=220.0,
+            expiration=date(2026, 6, 19),
+            bid=0.05,
+            ask=0.07,
+            underlying_price=215.0,
+        )
+        short_put = OptionContract(
+            contract_symbol="AAPL260619P00220000",
+            underlying="AAPL",
+            option_type="put",
+            strike=220.0,
+            expiration=date(2026, 6, 19),
+            bid=4.8,
+            ask=4.9,
+            underlying_price=215.0,
+        )
+        position = PositionSnapshot(
+            strategy_id="ic-1",
+            strategy_name="iron_condor",
+            underlying="AAPL",
+            legs=[
+                OrderLeg(contract=short_call, side="sell_to_open"),
+                OrderLeg(contract=short_put, side="sell_to_open"),
+            ],
+            opened_at=datetime.now(timezone.utc),
+            entry_credit=100.0,
+            max_loss=400.0,
+            profit_take_pct=0.5,
+            loss_stop_multiple=2.0,
+            roll_threshold_delta=None,
+            ex_dividend_date=date(2026, 4, 24),
+            dividend_amount=0.35,
+            remaining_extrinsic_value=0.01,
+            short_leg_itm=True,
+        )
+
         self.assertFalse(
             should_close_short_call_for_ex_div(position, as_of=date(2026, 4, 23))
         )

@@ -92,7 +92,7 @@ def _save_positions_worker(args):
             )
         )
     save_positions(Path(path), positions)
-    return entry["sym"]
+    return payload[-1]["sym"] if payload else None
 
 
 def _persist_order_worker(args):
@@ -250,6 +250,15 @@ class ConcurrencyTests(unittest.TestCase):
             with open(path, "r", encoding="utf-8") as handle:
                 parsed = json.load(handle)
             self.assertIsInstance(parsed, list)
+
+    def test_save_positions_worker_handles_empty_payload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "positions.json"
+
+            result = _save_positions_worker((str(path), []))
+
+            self.assertIsNone(result)
+            self.assertEqual(load_positions(path), [])
 
     def test_concurrent_persist_open_order_keeps_all_positions(self):
         with tempfile.TemporaryDirectory() as tmp:

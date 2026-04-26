@@ -2,9 +2,16 @@ from __future__ import annotations
 
 import unittest
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from core.models import OptionContract, OrderLeg, PositionSnapshot, StrategyOrder
-from core.risk_manager import continuous_risk_checks, identify_elevated_positions, pre_trade_check
+from core.risk_manager import (
+    continuous_risk_checks,
+    identify_elevated_positions,
+    pre_trade_check,
+    write_greeks_snapshot,
+)
 
 
 def _contract(symbol: str, option_type: str = "put", delta: float = -0.2) -> OptionContract:
@@ -484,6 +491,28 @@ class ContinuousRiskTests(unittest.TestCase):
         )
         actions = {item["action"] for item in payload["actions"]}
         self.assertNotIn("take_profit", actions)
+
+
+class GreeksSnapshotTests(unittest.TestCase):
+    def test_snapshot_filenames_include_microseconds(self):
+        with TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            first = write_greeks_snapshot(
+                directory,
+                {"sequence": 1},
+                as_of=datetime(2026, 4, 23, 16, 0, 0, 111111, tzinfo=timezone.utc),
+            )
+            second = write_greeks_snapshot(
+                directory,
+                {"sequence": 2},
+                as_of=datetime(2026, 4, 23, 16, 0, 0, 222222, tzinfo=timezone.utc),
+            )
+
+            self.assertNotEqual(first, second)
+            self.assertEqual(first.name, "20260423-160000-111111.json")
+            self.assertEqual(second.name, "20260423-160000-222222.json")
+            self.assertTrue(first.exists())
+            self.assertTrue(second.exists())
 
 
 if __name__ == "__main__":
