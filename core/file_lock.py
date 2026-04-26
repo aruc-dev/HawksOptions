@@ -114,6 +114,8 @@ def locked_open(
         yield handle
     finally:
         try:
+            if handle.writable():
+                handle.flush()
             _release(handle)
         finally:
             handle.close()

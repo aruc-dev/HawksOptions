@@ -22,6 +22,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
+import core.file_lock as file_lock
 from core.iv_rank_tracker import append_iv_snapshot, prune_iv_history
 from core.order_executor import load_positions, save_positions
 from core.trade_log import TRADE_LOG_FIELDS, append_trade_rows, read_trade_rows
@@ -102,6 +103,26 @@ def _append_iv_worker(args):
 
 
 class ConcurrencyTests(unittest.TestCase):
+    def test_locked_open_flushes_writer_before_unlocking(self):
+        """A waiting process must see writes before it acquires the lock."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "locked.txt"
+            observed_sizes: list[int] = []
+            original_release = file_lock._release
+
+            def release_with_size_check(handle):
+                observed_sizes.append(path.stat().st_size)
+                original_release(handle)
+
+            file_lock._release = release_with_size_check
+            try:
+                with file_lock.locked_open(path, "a", lock="exclusive") as handle:
+                    handle.write("x")
+            finally:
+                file_lock._release = original_release
+
+            self.assertEqual(observed_sizes, [1])
+
     def test_concurrent_trade_log_appends_keep_one_header(self):
         """Multiple processes appending simultaneously must produce a
         single header row and the expected total row count."""
