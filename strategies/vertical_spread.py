@@ -16,9 +16,12 @@ class VerticalSpreadStrategy(BaseStrategy):
         if self.in_earnings_blackout(context):
             return None
         variant = str(self.params.get("variant", "bull_put_credit"))
-        if variant == "bull_put_credit":
+        if variant == "auto":
+            trend = float(context.underlying.get("trend_20d", 0.0))
+            variant = "bull_put_credit" if trend >= 0 else "bear_call_credit"
+        if variant in {"bull_put_credit", "bullish"}:
             option_type = "put"
-        elif variant == "bear_call_credit":
+        elif variant in {"bear_call_credit", "bearish"}:
             option_type = "call"
         else:
             return None
@@ -37,7 +40,12 @@ class VerticalSpreadStrategy(BaseStrategy):
         credit = round((short_leg.mid_price() - long_leg.mid_price()) * 100.0, 2)
         if credit <= 0 or width <= credit:
             return None
-        return StrategyOrder(
+        if not self.credit_quality_passes(credit=credit, width=width):
+            return None
+        qty = self.order_quantity(context)
+        if qty <= 0:
+            return None
+        order = StrategyOrder(
             strategy_name=self.name,
             strategy_id=self.strategy_id(context),
             underlying=context.underlying["symbol"],
@@ -57,3 +65,4 @@ class VerticalSpreadStrategy(BaseStrategy):
             next_earnings_date=self.next_earnings_date(context),
             ex_dividend_date=self.ex_dividend_date(context),
         )
+        return self.apply_contract_quantity(order, qty)

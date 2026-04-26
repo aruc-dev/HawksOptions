@@ -268,6 +268,7 @@ class StrategyContext:
     iv_rank: float
     as_of: date
     underlying_price: float
+    current_iv: float = 0.0
     next_earnings_date: date | None = None
     ex_dividend_date: date | None = None
     dividend_amount: float = 0.0

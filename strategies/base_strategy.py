@@ -7,7 +7,7 @@ from datetime import date
 from typing import Any
 
 from core.config import strategy_config
-from core.models import StrategyContext
+from core.models import OrderLeg, StrategyContext, StrategyOrder
 from core.options_chain import filter_contracts
 
 
@@ -59,6 +59,47 @@ class BaseStrategy(ABC):
             as_of=context.as_of,
             option_type=option_type,
         )
+
+    def order_quantity(self, context: StrategyContext, *, default: int = 1) -> int:
+        requested = int(self.params.get("contracts", self.params.get("qty", default)))
+        limits = [requested]
+        for key in ("max_contracts", "max_contracts_per_underlying"):
+            if key in self.params:
+                limits.append(int(self.params[key]))
+            if key in context.underlying:
+                limits.append(int(context.underlying[key]))
+        non_negative_limits = [limit for limit in limits if limit >= 0]
+        if not non_negative_limits:
+            return 0
+        return min(non_negative_limits)
+
+    def apply_contract_quantity(self, order: StrategyOrder, qty: int) -> StrategyOrder:
+        qty = max(1, int(qty))
+        if qty == 1:
+            return order
+        order.legs = [
+            OrderLeg(contract=leg.contract, side=leg.side, qty=leg.qty * qty)
+            for leg in order.legs
+        ]
+        order.max_loss = round(order.max_loss * qty, 2)
+        order.max_profit = round(order.max_profit * qty, 2)
+        order.required_buying_power = round(order.required_buying_power * qty, 2)
+        return order
+
+    def credit_quality_passes(self, *, credit: float, width: float) -> bool:
+        if width <= 0:
+            return False
+        min_credit = float(self.params.get("min_net_credit", 0.0))
+        min_credit_to_width = float(self.params.get("min_credit_to_width", 0.0))
+        max_loss = max(0.0, width - credit)
+        min_reward_to_risk = float(self.params.get("min_reward_to_risk", 0.0))
+        if credit < min_credit:
+            return False
+        if credit / width < min_credit_to_width:
+            return False
+        if min_reward_to_risk > 0 and (max_loss <= 0 or credit / max_loss < min_reward_to_risk):
+            return False
+        return True
 
     def strategy_id(self, context: StrategyContext) -> str:
         return f"{self.name}-{context.underlying['symbol']}-{context.as_of:%Y%m%d}"

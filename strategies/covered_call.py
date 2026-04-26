@@ -30,7 +30,9 @@ class CoveredCallStrategy(BaseStrategy):
         )
         if contract is None:
             return None
-        qty = max(1, context.long_shares // 100)
+        qty = min(context.long_shares // 100, self.order_quantity(context, default=context.long_shares // 100))
+        if qty <= 0:
+            return None
         credit = round(contract.mid_price() * 100.0 * qty, 2)
         max_loss = round((max(context.cost_basis, context.underlying_price) * 100.0 * qty) - credit, 2)
         return StrategyOrder(

@@ -1,0 +1,30 @@
+[Unit]
+Description=Cloudflare Tunnel for HawksOptions Dashboard
+Documentation=file:/home/ec2-user/HawksOptions/cloud-setup/dashboard-setup.md
+After=network-online.target hawksoptions-dashboard.service
+Wants=network-online.target
+Requires=hawksoptions-dashboard.service
+
+[Service]
+Type=simple
+User=cloudflared
+Group=cloudflared
+ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel --config /etc/cloudflared/config.yml run
+Restart=on-failure
+RestartSec=10
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/etc/cloudflared
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

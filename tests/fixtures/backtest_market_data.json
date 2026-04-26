@@ -1,0 +1,156 @@
+{
+  "underlyings": {
+    "SPY": {
+      "2026-04-20": {
+        "price": 100.0,
+        "current_iv": 0.3,
+        "iv_rank": 55.0,
+        "realized_vol_20d": 0.12,
+        "atr_pct": 0.01
+      },
+      "2026-04-21": {
+        "price": 99.0,
+        "current_iv": 0.31,
+        "iv_rank": 58.0,
+        "realized_vol_20d": 0.13,
+        "atr_pct": 0.011
+      }
+    }
+  },
+  "chains": {
+    "SPY": {
+      "2026-04-20": [
+        {
+          "contract_symbol": "SPY260525P00095000",
+          "option_type": "put",
+          "strike": 95.0,
+          "expiration": "2026-05-25",
+          "bid": 1.0,
+          "ask": 1.1,
+          "open_interest": 500,
+          "volume": 100,
+          "implied_volatility": 0.3,
+          "delta": -0.2,
+          "theta": -0.04,
+          "vega": 0.1,
+          "gamma": 0.01,
+          "underlying_price": 100.0
+        },
+        {
+          "contract_symbol": "SPY260525P00090000",
+          "option_type": "put",
+          "strike": 90.0,
+          "expiration": "2026-05-25",
+          "bid": 0.45,
+          "ask": 0.5,
+          "open_interest": 500,
+          "volume": 100,
+          "implied_volatility": 0.3,
+          "delta": -0.1,
+          "theta": -0.02,
+          "vega": 0.08,
+          "gamma": 0.008,
+          "underlying_price": 100.0
+        },
+        {
+          "contract_symbol": "SPY260525C00105000",
+          "option_type": "call",
+          "strike": 105.0,
+          "expiration": "2026-05-25",
+          "bid": 0.95,
+          "ask": 1.05,
+          "open_interest": 500,
+          "volume": 100,
+          "implied_volatility": 0.3,
+          "delta": 0.2,
+          "theta": -0.04,
+          "vega": 0.1,
+          "gamma": 0.01,
+          "underlying_price": 100.0
+        },
+        {
+          "contract_symbol": "SPY260525C00110000",
+          "option_type": "call",
+          "strike": 110.0,
+          "expiration": "2026-05-25",
+          "bid": 0.4,
+          "ask": 0.45,
+          "open_interest": 500,
+          "volume": 100,
+          "implied_volatility": 0.3,
+          "delta": 0.1,
+          "theta": -0.02,
+          "vega": 0.08,
+          "gamma": 0.008,
+          "underlying_price": 100.0
+        }
+      ],
+      "2026-04-21": [
+        {
+          "contract_symbol": "SPY260525P00095000",
+          "option_type": "put",
+          "strike": 95.0,
+          "expiration": "2026-05-25",
+          "bid": 1.1,
+          "ask": 1.2,
+          "open_interest": 500,
+          "volume": 100,
+          "implied_volatility": 0.31,
+          "delta": -0.22,
+          "theta": -0.04,
+          "vega": 0.1,
+          "gamma": 0.01,
+          "underlying_price": 99.0
+        },
+        {
+          "contract_symbol": "SPY260525P00090000",
+          "option_type": "put",
+          "strike": 90.0,
+          "expiration": "2026-05-25",
+          "bid": 0.5,
+          "ask": 0.55,
+          "open_interest": 500,
+          "volume": 100,
+          "implied_volatility": 0.31,
+          "delta": -0.11,
+          "theta": -0.02,
+          "vega": 0.08,
+          "gamma": 0.008,
+          "underlying_price": 99.0
+        },
+        {
+          "contract_symbol": "SPY260525C00105000",
+          "option_type": "call",
+          "strike": 105.0,
+          "expiration": "2026-05-25",
+          "bid": 0.85,
+          "ask": 0.95,
+          "open_interest": 500,
+          "volume": 100,
+          "implied_volatility": 0.31,
+          "delta": 0.18,
+          "theta": -0.04,
+          "vega": 0.1,
+          "gamma": 0.01,
+          "underlying_price": 99.0
+        },
+        {
+          "contract_symbol": "SPY260525C00110000",
+          "option_type": "call",
+          "strike": 110.0,
+          "expiration": "2026-05-25",
+          "bid": 0.35,
+          "ask": 0.4,
+          "open_interest": 500,
+          "volume": 100,
+          "implied_volatility": 0.31,
+          "delta": 0.09,
+          "theta": -0.02,
+          "vega": 0.08,
+          "gamma": 0.008,
+          "underlying_price": 99.0
+        }
+      ]
+    }
+  }
+}

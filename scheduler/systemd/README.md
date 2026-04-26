@@ -13,6 +13,7 @@ All unit names are prefixed with `hawksoptions-` so they can coexist with
 - `hawksoptions-roll-check.service` + `.timer`
 - `hawksoptions-eod-report.service` + `.timer`
 - `hawksoptions-dashboard.service`
+- `hawksoptions-cloudflared.service` (optional, for Cloudflare Tunnel)
 
 ## Install
 
