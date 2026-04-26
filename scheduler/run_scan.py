@@ -183,7 +183,11 @@ def scan_market(*, config: dict[str, Any], as_of: date | None = None, dry_run: b
             open_positions=positions,
             as_of=as_of,
         )
-        candidates: list[tuple[float, StrategyOrder]] = []
+        # Cheap, local structural critique runs per candidate so it can feed
+        # into pre-trade gating. The expensive external AI checks
+        # (NewsAPI + OpenAI) are deferred until *after* select_best_order so
+        # we only pay for them on the single candidate we might execute.
+        candidates: list[tuple[float, StrategyOrder, str]] = []
         for strategy in strategies:
             order = strategy.generate_order(context)
             if order is None:
@@ -192,18 +196,6 @@ def scan_market(*, config: dict[str, Any], as_of: date | None = None, dry_run: b
             structural_severity = str(critique.get("severity", "none"))
             if structural_severity == "major":
                 order.ai_veto_reason = "trade_critic_major_concern"
-            external = {"veto_reason": "", "news": None, "llm": None}
-            if not order.ai_veto_reason:
-                external = evaluate_external_ai(
-                    order,
-                    config=config,
-                    structural_severity=structural_severity,
-                )
-            external_reason = str(external.get("veto_reason") or "")
-            if external_reason and not order.ai_veto_reason:
-                # Veto-only: external checks can add a veto reason but
-                # never clear an existing structural one.
-                order.ai_veto_reason = external_reason
             decision = pre_trade_check(
                 order,
                 account=account,
@@ -220,10 +212,26 @@ def scan_market(*, config: dict[str, Any], as_of: date | None = None, dry_run: b
                     }
                 )
                 continue
-            candidates.append((score_order(order, context, config), order))
-        order = select_best_order(candidates)
-        if order is None:
+            candidates.append((score_order(order, context, config), order, structural_severity))
+        best = select_best_order([(s, o) for s, o, _ in candidates])
+        if best is None:
             continue
+        # Recover the structural_severity that travelled with the winning order.
+        structural_severity = next(
+            (sev for _, o, sev in candidates if o is best), "none"
+        )
+        if not best.ai_veto_reason:
+            external = evaluate_external_ai(
+                best,
+                config=config,
+                structural_severity=structural_severity,
+            )
+            external_reason = str(external.get("veto_reason") or "")
+            if external_reason:
+                # Veto-only: external checks can add a veto reason but
+                # never clear an existing structural one.
+                best.ai_veto_reason = external_reason
+        order = best
         result = execute_order(client, order, dry_run=dry_run)
         accepted.append({"underlying": underlying["symbol"], "strategy": order.strategy_name, "order": result})
         if not dry_run:
