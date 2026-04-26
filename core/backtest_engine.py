@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from math import sqrt
 from pathlib import Path
 from statistics import mean, pstdev
 from typing import Any
 
-from core.alpaca_options_client import AlpacaOptionsClient
 from core.config import load_underlyings
+from core.historical_market_data import backtest_market_data_client
 from core.models import PositionSnapshot, StrategyContext
 from core.order_executor import position_from_order
 from core.risk_manager import continuous_risk_checks, pre_trade_check
+from strategies.selection import score_order, select_best_order
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,7 @@ class BacktestResult:
     win_rate: float
     trade_count: int
     closed_trade_count: int
+    rejected_reasons: dict[str, int] = field(default_factory=dict)
 
 
 def _daily_returns(equity_curve: list[float]) -> list[float]:
@@ -103,7 +105,7 @@ def _apply_entry_slippage(position: PositionSnapshot, slippage: dict[str, float]
 
 def _mark_to_market(
     position: PositionSnapshot,
-    client: AlpacaOptionsClient,
+    client,
     as_of: date,
     *,
     slippage: dict[str, float] | None = None,
@@ -138,6 +140,68 @@ def _mark_to_market(
     return position
 
 
+def _inventory_for(symbol: str, stock_inventory: dict[str, dict[str, float]]) -> tuple[int, float]:
+    item = stock_inventory.get(symbol, {})
+    return int(item.get("shares", 0)), float(item.get("cost_basis", 0.0))
+
+
+def _add_stock_inventory(
+    stock_inventory: dict[str, dict[str, float]],
+    symbol: str,
+    *,
+    shares: int,
+    cost_basis: float,
+) -> None:
+    if shares <= 0:
+        return
+    current = stock_inventory.setdefault(symbol, {"shares": 0.0, "cost_basis": 0.0})
+    old_shares = float(current.get("shares", 0.0))
+    old_basis = float(current.get("cost_basis", 0.0))
+    new_shares = old_shares + shares
+    current["cost_basis"] = round(((old_basis * old_shares) + (cost_basis * shares)) / new_shares, 4)
+    current["shares"] = new_shares
+
+
+def _remove_stock_inventory(stock_inventory: dict[str, dict[str, float]], symbol: str, *, shares: int) -> None:
+    current = stock_inventory.get(symbol)
+    if not current or shares <= 0:
+        return
+    current["shares"] = max(0.0, float(current.get("shares", 0.0)) - shares)
+    if current["shares"] <= 0:
+        current["cost_basis"] = 0.0
+
+
+def _apply_expiration_assignment(
+    position: PositionSnapshot,
+    stock_inventory: dict[str, dict[str, float]],
+    as_of: date,
+) -> bool:
+    """Convert simple CSP/covered-call expirations into stock inventory.
+
+    Returns True when assignment was handled and the option should not also be
+    treated as a normal option close. Multi-leg defined-risk assignments are not
+    simulated here; those continue to close through the normal mark-to-market
+    path.
+    """
+    position_dte = min((leg.contract.days_to_expiration(as_of) for leg in position.legs), default=0)
+    if position_dte > 0:
+        return False
+    if position.strategy_name == "cash_secured_put" and len(position.legs) == 1:
+        leg = position.legs[0]
+        contract = leg.contract
+        if leg.side == "sell_to_open" and contract.option_type == "put" and contract.underlying_price < contract.strike:
+            adjusted_basis = max(0.0, contract.strike - (position.entry_credit / (100.0 * leg.qty)))
+            _add_stock_inventory(stock_inventory, position.underlying, shares=100 * leg.qty, cost_basis=adjusted_basis)
+            return True
+    if position.strategy_name == "covered_call" and len(position.legs) == 1:
+        leg = position.legs[0]
+        contract = leg.contract
+        if leg.side == "sell_to_open" and contract.option_type == "call" and contract.underlying_price > contract.strike:
+            _remove_stock_inventory(stock_inventory, position.underlying, shares=100 * leg.qty)
+            return True
+    return False
+
+
 def _write_report(
     result: BacktestResult,
     *,
@@ -155,6 +219,8 @@ def _write_report(
         handle.write(f"- Max drawdown: {result.max_drawdown_pct:.2f}%\n")
         handle.write(f"- Win rate: {result.win_rate:.2f}%\n")
         handle.write(f"- Closed trades: {result.closed_trade_count}\n")
+        if result.rejected_reasons:
+            handle.write(f"- Rejected reasons: {result.rejected_reasons}\n")
     return path
 
 
@@ -164,16 +230,19 @@ def run_backtest(
     strategies: list[Any],
     days: int,
     starting_fund: float,
+    start_date: date | None = None,
 ) -> tuple[BacktestResult, Path]:
-    client = AlpacaOptionsClient(config, use_sample_data=True)
+    client = backtest_market_data_client(config)
     underlyings = load_underlyings(config)
     slippage = _slippage_settings(config)
     current_equity = float(starting_fund)
     closed_pnls: list[float] = []
     open_positions: list[PositionSnapshot] = []
     trade_count = 0
+    rejected_reasons: dict[str, int] = {}
+    stock_inventory: dict[str, dict[str, float]] = {}
     equity_curve = [current_equity]
-    start_date = date.today() - timedelta(days=max(days, 10))
+    start_date = start_date or (date.today() - timedelta(days=max(days, 10)))
 
     for offset in range(days):
         as_of = start_date + timedelta(days=offset)
@@ -207,8 +276,11 @@ def run_backtest(
         still_open: list[PositionSnapshot] = []
         for position in open_positions:
             if position.strategy_id in close_ids:
+                assigned = _apply_expiration_assignment(position, stock_inventory, as_of)
                 closed_pnls.append(position.current_pnl)
                 current_equity += position.current_pnl
+                if assigned:
+                    position.current_pnl = 0.0
             else:
                 still_open.append(position)
         open_positions = still_open
@@ -226,6 +298,7 @@ def run_backtest(
                 continue
             snapshot = client.get_underlying_snapshot(symbol, as_of=as_of)
             chain = client.get_option_chain(symbol, as_of=as_of)
+            long_shares, cost_basis = _inventory_for(symbol, stock_inventory)
             context = StrategyContext(
                 underlying=underlying,
                 chain=chain,
@@ -234,12 +307,16 @@ def run_backtest(
                 iv_rank=float(snapshot["iv_rank"]),
                 as_of=as_of,
                 underlying_price=float(snapshot["price"]),
+                current_iv=float(snapshot.get("current_iv", 0.0)),
                 next_earnings_date=underlying.get("next_earnings_date"),
                 ex_dividend_date=underlying.get("ex_dividend_date"),
                 dividend_amount=float(underlying.get("dividend_amount", 0.0)),
                 realized_vol_20d=float(snapshot["realized_vol_20d"]),
                 atr_pct=float(snapshot["atr_pct"]),
+                long_shares=long_shares,
+                cost_basis=cost_basis,
             )
+            candidates: list[tuple[float, Any]] = []
             for strategy in strategies:
                 order = strategy.generate_order(context)
                 if order is None:
@@ -252,7 +329,12 @@ def run_backtest(
                     as_of=as_of,
                 )
                 if not decision.accepted:
+                    for reason in decision.reasons:
+                        rejected_reasons[reason] = rejected_reasons.get(reason, 0) + 1
                     continue
+                candidates.append((score_order(order, context, config), order))
+            order = select_best_order(candidates)
+            if order is not None:
                 position = position_from_order(
                     order,
                     opened_at=datetime.combine(as_of, time(10, 0), tzinfo=timezone.utc),
@@ -260,7 +342,6 @@ def run_backtest(
                 _apply_entry_slippage(position, slippage)
                 open_positions.append(position)
                 trade_count += 1
-                break
         mtm = sum(position.current_pnl for position in open_positions)
         equity_curve.append(round(current_equity + mtm, 2))
 
@@ -275,6 +356,7 @@ def run_backtest(
         win_rate=round((wins / len(closed_pnls)) * 100.0, 2) if closed_pnls else 0.0,
         trade_count=trade_count,
         closed_trade_count=len(closed_pnls),
+        rejected_reasons=rejected_reasons,
     )
     report_path = _write_report(result, reports_dir=Path(config["reporting"]["reports_dir"]), days=days)
     return result, report_path

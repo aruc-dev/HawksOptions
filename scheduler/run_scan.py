@@ -23,6 +23,7 @@ from core.order_executor import execute_order, persist_open_order
 from core.risk_manager import pre_trade_check
 from scheduler.common import build_context, configured_underlyings, current_positions, load_runtime
 from strategies import build_enabled_strategies
+from strategies.selection import score_order, select_best_order
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -182,6 +183,7 @@ def scan_market(*, config: dict[str, Any], as_of: date | None = None, dry_run: b
             open_positions=positions,
             as_of=as_of,
         )
+        candidates: list[tuple[float, StrategyOrder]] = []
         for strategy in strategies:
             order = strategy.generate_order(context)
             if order is None:
@@ -218,18 +220,21 @@ def scan_market(*, config: dict[str, Any], as_of: date | None = None, dry_run: b
                     }
                 )
                 continue
-            result = execute_order(client, order, dry_run=dry_run)
-            accepted.append({"underlying": underlying["symbol"], "strategy": strategy.name, "order": result})
-            if not dry_run:
-                position = persist_open_order(
-                    order=order,
-                    mode=str(config.get("mode", "paper")),
-                    order_id=str(result["id"]),
-                    trade_log_path=paths["trade_log"],
-                    positions_path=paths["positions"],
-                )
-                positions.append(position)
-            break
+            candidates.append((score_order(order, context, config), order))
+        order = select_best_order(candidates)
+        if order is None:
+            continue
+        result = execute_order(client, order, dry_run=dry_run)
+        accepted.append({"underlying": underlying["symbol"], "strategy": order.strategy_name, "order": result})
+        if not dry_run:
+            position = persist_open_order(
+                order=order,
+                mode=str(config.get("mode", "paper")),
+                order_id=str(result["id"]),
+                trade_log_path=paths["trade_log"],
+                positions_path=paths["positions"],
+            )
+            positions.append(position)
     return {
         "as_of": as_of.isoformat(),
         "accepted_count": len(accepted),

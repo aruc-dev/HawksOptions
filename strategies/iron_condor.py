@@ -15,9 +15,14 @@ class IronCondorStrategy(BaseStrategy):
             return None
         if self.in_earnings_blackout(context):
             return None
-        if context.realized_vol_20d >= max(0.01, context.underlying.get("current_iv", context.iv_rank / 100.0)):
+        min_iv_rank = float(self.params.get("min_iv_rank", 0.0))
+        if min_iv_rank > 0 and context.iv_rank < min_iv_rank:
             return None
-        if context.atr_pct > 0.03:
+        current_iv = context.current_iv or float(context.underlying.get("current_iv", context.iv_rank / 100.0))
+        min_iv_over_realized = float(self.params.get("min_iv_over_realized_vol", 1.0))
+        if current_iv < max(0.01, context.realized_vol_20d * min_iv_over_realized):
+            return None
+        if context.atr_pct > float(self.params.get("max_atr_pct", 0.03)):
             return None
         contracts = select_iron_condor(
             context.chain,
@@ -40,7 +45,12 @@ class IronCondorStrategy(BaseStrategy):
         max_loss = round(max(put_width, call_width) - credit, 2)
         if credit <= 0 or max_loss <= 0:
             return None
-        return StrategyOrder(
+        if not self.credit_quality_passes(credit=credit, width=max(put_width, call_width)):
+            return None
+        qty = self.order_quantity(context)
+        if qty <= 0:
+            return None
+        order = StrategyOrder(
             strategy_name=self.name,
             strategy_id=self.strategy_id(context),
             underlying=context.underlying["symbol"],
@@ -62,3 +72,4 @@ class IronCondorStrategy(BaseStrategy):
             next_earnings_date=self.next_earnings_date(context),
             ex_dividend_date=self.ex_dividend_date(context),
         )
+        return self.apply_contract_quantity(order, qty)

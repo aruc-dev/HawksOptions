@@ -1,0 +1,10 @@
+underlyings:
+  - symbol: SPY
+    max_contracts: 2
+    strategies_allowed: [cash_secured_put, covered_call, vertical_spread, iron_condor]
+    next_earnings_date:
+    ex_dividend_date:
+    dividend_amount: 0.0
+    realized_vol_20d: 0.14
+    atr_pct: 0.012
+    trend_20d: 0.01

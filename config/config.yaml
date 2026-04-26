@@ -39,6 +39,7 @@ market_data:
   default_dividend_yield: 0.0
 
 backtest:
+  data_source: sample
   # Slippage and commission applied per leg on both entry and exit.
   # Repo defaults include realistic slippage/commission, so baseline
   # backtest results include transaction-cost drag.
@@ -89,6 +90,8 @@ strategies:
     profit_take_pct: 0.50
     loss_stop_multiple: 1.5
     roll_threshold_delta: -0.40
+    min_credit_to_width: 0.05
+    min_net_credit: 5.0
     weight: 1.0
 
   iron_condor:
@@ -105,6 +108,11 @@ strategies:
     profit_take_pct: 0.40
     loss_stop_multiple: 2.0
     warning_delta_abs: 0.40
+    min_iv_rank: 30
+    min_iv_over_realized_vol: 1.0
+    max_atr_pct: 0.03
+    min_credit_to_width: 0.05
+    min_net_credit: 5.0
     skip_if_earnings_within_dte: true
     weight: 1.0
 
@@ -115,6 +123,7 @@ strategies:
     target_delta: 0.30
     front_dte: 21
     back_dte: 45
+    contracts: 1
     weight: 0.5
 
   earnings_iron_condor:
@@ -122,8 +131,18 @@ strategies:
     required_options_level: 3
     swing_only: true
     require_iv_rank: 60
+    entry_days_before_earnings: 1
+    put_short_delta: -0.16
+    put_long_delta: -0.08
+    call_short_delta: 0.16
+    call_long_delta: 0.08
     dte_min: 7
     dte_max: 14
+    profit_take_pct: 0.25
+    loss_stop_multiple: 1.25
+    warning_delta_abs: 0.35
+    min_credit_to_width: 0.05
+    min_net_credit: 5.0
     max_contracts: 1
     weight: 0.3
 

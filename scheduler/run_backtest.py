@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import date
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -19,6 +20,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the HawksOptions backtest")
     parser.add_argument("--days", type=int, default=30)
     parser.add_argument("--fund", type=float, default=10000.0)
+    parser.add_argument("--start-date", help="optional YYYY-MM-DD replay start date")
     args = parser.parse_args(argv)
 
     config = load_config()
@@ -28,6 +30,7 @@ def main(argv: list[str] | None = None) -> int:
         strategies=strategies,
         days=max(5, args.days),
         starting_fund=max(1000.0, args.fund),
+        start_date=date.fromisoformat(args.start_date) if args.start_date else None,
     )
     print(
         json.dumps(
@@ -40,6 +43,7 @@ def main(argv: list[str] | None = None) -> int:
                 "win_rate": result.win_rate,
                 "trade_count": result.trade_count,
                 "closed_trade_count": result.closed_trade_count,
+                "rejected_reasons": result.rejected_reasons,
                 "report_path": str(report_path),
             },
             indent=2,

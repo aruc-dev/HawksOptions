@@ -110,6 +110,7 @@ def build_context(
 ) -> StrategyContext:
     symbol = underlying["symbol"]
     snapshot = client.get_underlying_snapshot(symbol, as_of=as_of)
+    long_shares, cost_basis = stock_inventory(client, symbol)
     return StrategyContext(
         underlying=underlying,
         chain=client.get_option_chain(symbol, as_of=as_of),
@@ -118,15 +119,32 @@ def build_context(
         iv_rank=float(snapshot["iv_rank"]),
         as_of=as_of,
         underlying_price=float(snapshot["price"]),
+        current_iv=float(snapshot.get("current_iv", 0.0)),
         next_earnings_date=underlying.get("next_earnings_date"),
         ex_dividend_date=underlying.get("ex_dividend_date"),
         dividend_amount=float(underlying.get("dividend_amount", 0.0)),
         realized_vol_20d=float(snapshot.get("realized_vol_20d", 0.0)),
         atr_pct=float(snapshot.get("atr_pct", 0.0)),
-        long_shares=0,
-        cost_basis=0.0,
+        long_shares=long_shares,
+        cost_basis=cost_basis,
         open_positions=tuple(open_positions),
     )
+
+
+def stock_inventory(client: AlpacaOptionsClient, symbol: str) -> tuple[int, float]:
+    """Return long stock shares and average cost for covered-call context."""
+    try:
+        positions = client.get_positions()
+    except Exception:
+        return 0, 0.0
+    for position in positions:
+        if str(position.get("symbol", "")).upper() != symbol.upper():
+            continue
+        qty = int(float(position.get("qty", 0.0)))
+        if qty <= 0:
+            return 0, 0.0
+        return qty, float(position.get("avg_entry_price", 0.0))
+    return 0, 0.0
 
 
 def configured_underlyings(config: dict[str, Any]) -> list[dict[str, Any]]:

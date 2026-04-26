@@ -29,14 +29,29 @@ class CalendarSpreadStrategy(BaseStrategy):
             if contract.strike == target.strike:
                 by_strike[contract.strike].append(contract)
         same_strike = sorted(by_strike[target.strike], key=lambda contract: contract.expiration)
-        if len(same_strike) < 2:
+        back_dte = int(self.params.get("back_dte", 45))
+        back_candidates = [
+            contract
+            for contract in same_strike
+            if contract.expiration > target.expiration
+        ]
+        if not back_candidates:
             return None
-        front_leg = same_strike[0]
-        back_leg = same_strike[-1]
+        front_leg = target
+        back_leg = sorted(
+            back_candidates,
+            key=lambda contract: (
+                abs(contract.days_to_expiration(context.as_of) - back_dte),
+                contract.spread_pct(),
+            ),
+        )[0]
         debit = round((back_leg.mid_price() - front_leg.mid_price()) * 100.0, 2)
         if debit <= 0:
             return None
-        return StrategyOrder(
+        qty = self.order_quantity(context)
+        if qty <= 0:
+            return None
+        order = StrategyOrder(
             strategy_name=self.name,
             strategy_id=self.strategy_id(context),
             underlying=context.underlying["symbol"],
@@ -56,3 +71,4 @@ class CalendarSpreadStrategy(BaseStrategy):
             next_earnings_date=self.next_earnings_date(context),
             ex_dividend_date=self.ex_dividend_date(context),
         )
+        return self.apply_contract_quantity(order, qty)

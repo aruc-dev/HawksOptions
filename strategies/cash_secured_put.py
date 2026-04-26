@@ -26,7 +26,10 @@ class CashSecuredPutStrategy(BaseStrategy):
             return None
         credit = round(contract.mid_price() * 100.0, 2)
         max_loss = round((contract.strike * 100.0) - credit, 2)
-        return StrategyOrder(
+        qty = self.order_quantity(context)
+        if qty <= 0:
+            return None
+        order = StrategyOrder(
             strategy_name=self.name,
             strategy_id=self.strategy_id(context),
             underlying=context.underlying["symbol"],
@@ -43,3 +46,4 @@ class CashSecuredPutStrategy(BaseStrategy):
             next_earnings_date=self.next_earnings_date(context),
             ex_dividend_date=self.ex_dividend_date(context),
         )
+        return self.apply_contract_quantity(order, qty)
