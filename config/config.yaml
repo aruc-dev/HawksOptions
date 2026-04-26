@@ -40,8 +40,8 @@ market_data:
 
 backtest:
   # Slippage and commission applied per leg on both entry and exit.
-  # Defaults are zero so existing backtests reproduce; turn these on
-  # for realistic projections.
+  # Repo defaults include realistic slippage/commission, so baseline
+  # backtest results include transaction-cost drag.
   slippage:
     per_leg_cents: 0.02            # $/share per leg ($2 per contract)
     spread_pct: 0.50               # fraction of half-spread paid per leg

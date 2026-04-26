@@ -20,6 +20,16 @@ class IVRankTrackerTests(unittest.TestCase):
             values = load_iv_history(path, "SPY")
         self.assertEqual(values, [0.2, 0.25])
 
+    def test_load_missing_history_does_not_create_lock_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "missing" / "iv.csv"
+
+            values = load_iv_history(path, "SPY")
+
+            self.assertEqual(values, [])
+            self.assertFalse(path.exists())
+            self.assertFalse(path.with_name("iv.csv.lock").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -297,5 +297,5 @@ def write_greeks_snapshot(
     as_of = as_of or datetime.now(timezone.utc)
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{as_of:%Y%m%d-%H%M%S-%f}.json"
-    atomic_write_text(path, json.dumps(payload, indent=2))
+    atomic_write_text(path, json.dumps(payload, indent=2), lock=False)
     return path

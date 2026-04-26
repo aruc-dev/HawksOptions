@@ -514,6 +514,19 @@ class GreeksSnapshotTests(unittest.TestCase):
             self.assertTrue(first.exists())
             self.assertTrue(second.exists())
 
+    def test_snapshot_write_does_not_leave_per_file_lock(self):
+        with TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+
+            path = write_greeks_snapshot(
+                directory,
+                {"sequence": 1},
+                as_of=datetime(2026, 4, 23, 16, 0, 0, 111111, tzinfo=timezone.utc),
+            )
+
+            self.assertTrue(path.exists())
+            self.assertFalse(path.with_suffix(path.suffix + ".lock").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

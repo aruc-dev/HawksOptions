@@ -37,8 +37,7 @@ python3 scheduler/run_backtest.py --days 30 --fund 10000
 Always start with `bd ready --json`. If this checkout is not initialized for
 `bd` (Beads), run `./scripts/init_beads.sh`, then rerun `bd ready --json`.
 Claim matching work with `bd update <id> --claim --json`; if no matching task
-exists for non-trivial work, create one with `bd create "<title>" -t task -p 2
---json`.
+exists for non-trivial work, create one with `bd create "<title>" -t task -p 2 --json`.
 
 Bootstrap once with:
 

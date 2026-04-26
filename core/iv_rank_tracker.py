@@ -49,9 +49,9 @@ def append_iv_snapshot(
 def load_iv_history(path: Path, symbol: str, lookback_days: int = 365) -> list[float]:
     cutoff = datetime.now(timezone.utc) - timedelta(days=max(1, int(lookback_days)))
     out: list[float] = []
+    if not path.exists():
+        return []
     with locked_open(lock_path_for(path), "a", lock="shared"):
-        if not path.exists():
-            return []
         with open(path, "r", newline="", encoding="utf-8") as handle:
             reader = csv.DictReader(handle)
             for row in reader:
