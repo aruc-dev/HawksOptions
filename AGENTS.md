@@ -58,9 +58,17 @@ bd ready --json
 
 Every logic change requires:
 
+- focused unit tests for the functional behavior being added or changed
+- the full unit-test suite passing
+- lint checks passing
+- deterministic backtest validation
+
 ```bash
 python3 -m unittest discover -v
+python3 -W error::DeprecationWarning -m unittest discover
+ruff check .
+python3 -m compileall core strategies scheduler ai tests dashboard scripts
 python3 scheduler/run_backtest.py --days 30 --fund 10000
 ```
 
-If either fails, fix the issue before handing work off.
+If any check fails, fix the issue before handing work off.

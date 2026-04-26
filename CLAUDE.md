@@ -25,8 +25,13 @@ sudo systemctl stop 'hawksoptions-*.timer'
 
 ## Validation After Every Change
 
+Functional changes must include focused unit tests before validation.
+
 ```bash
 python3 -m unittest discover -v
+python3 -W error::DeprecationWarning -m unittest discover
+ruff check .
+python3 -m compileall core strategies scheduler ai tests dashboard scripts
 python3 scheduler/run_backtest.py --days 30 --fund 10000
 ```
 
