@@ -37,14 +37,21 @@ python3 scheduler/run_backtest.py --days 30 --fund 10000
 
 ## Beads Task Tracking
 
-This repo supports `bd` (Beads) for local task tracking. If it is initialized
-for the checkout, prefer `bd ready --json` and `bd update <id> --claim --json`
-over markdown task lists.
+This repo supports `bd` (Beads) for local task tracking. Every agent session
+must start with `bd ready --json` from the repo root. If Beads is not
+initialized, run `./scripts/init_beads.sh`, then rerun `bd ready --json`.
+
+Claim matching ready work with `bd update <id> --claim --json` before making
+changes. For non-trivial untracked work, create a task with `bd create "<title>"
+-t task -p 2 --json`. Record follow-up work in Beads instead of markdown task
+lists.
 
 Bootstrap once with:
 
 ```bash
 ./scripts/init_beads.sh
+bd ready --json
+bd update <id> --claim --json
 ```
 
 ## Deployment Notes

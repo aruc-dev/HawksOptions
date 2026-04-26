@@ -5,6 +5,13 @@
 Functional changes must include focused unit tests for the behavior being added
 or changed. Run the full validation gate before publishing or deploying:
 
+Start by checking tracked work in Beads:
+
+```bash
+bd ready --json
+bd update <id> --claim --json
+```
+
 ```bash
 python3 -m unittest discover -v
 python3 -W error::DeprecationWarning -m unittest discover

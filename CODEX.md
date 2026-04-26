@@ -5,16 +5,23 @@ first. This file is the short Codex-specific version.
 
 ## Safe Workflow
 
-1. Add focused unit tests for every functional change.
-2. Run the full unit-test suite.
-3. Run lint checks.
-4. Run the 30-day deterministic backtest.
-5. Keep dashboard routes read-only.
-6. Do not relax risk caps or change `mode` without approval.
+1. Run `bd ready --json` from the repo root before making changes.
+2. If Beads is not initialized, run `./scripts/init_beads.sh`, then rerun
+   `bd ready --json`.
+3. Claim matching Beads work with `bd update <id> --claim --json`; create a
+   task for non-trivial untracked work.
+4. Add focused unit tests for every functional change.
+5. Run the full unit-test suite.
+6. Run lint checks.
+7. Run the 30-day deterministic backtest.
+8. Keep dashboard routes read-only.
+9. Do not relax risk caps or change `mode` without approval.
 
 ## Useful Commands
 
 ```bash
+bd ready --json
+bd update <id> --claim --json
 python3 -m unittest discover -v
 python3 -W error::DeprecationWarning -m unittest discover
 ruff check .
@@ -27,8 +34,11 @@ python3 scheduler/run_backtest.py --days 30 --fund 10000
 
 ## Beads
 
-If this checkout is initialized for `bd` (Beads), start with `bd ready --json`
-and claim work with `bd update <id> --claim --json`.
+Always start with `bd ready --json`. If this checkout is not initialized for
+`bd` (Beads), run `./scripts/init_beads.sh`, then rerun `bd ready --json`.
+Claim matching work with `bd update <id> --claim --json`; if no matching task
+exists for non-trivial work, create one with `bd create "<title>" -t task -p 2
+--json`.
 
 Bootstrap once with:
 

@@ -51,8 +51,17 @@ real Alpaca keys are added.
 ## Optional: Beads Task Tracking
 
 This repo includes repo-level support for `bd` (Beads), an agent-oriented task
-tracker. Install `bd`, run `./scripts/init_beads.sh`, then use `bd ready --json`
-to inspect or claim work.
+tracker. Agent sessions should run `bd ready --json` before making changes. If
+the checkout is not initialized, run `./scripts/init_beads.sh`, then rerun
+`bd ready --json`.
+
+Use Beads for non-trivial tracked work:
+
+```bash
+bd ready --json
+bd update <id> --claim --json
+bd create "Title" -t task -p 2 --json
+```
 
 See [docs/beads.md](docs/beads.md) for setup and workflow details.
 
