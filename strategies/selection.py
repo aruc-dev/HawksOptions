@@ -6,17 +6,7 @@ from typing import Any
 
 from core.config import strategy_config
 from core.models import StrategyContext, StrategyOrder
-
-
-SHORT_PREMIUM_STRATEGIES = {
-    "cash_secured_put",
-    "covered_call",
-    "vertical_spread",
-    "iron_condor",
-    "earnings_iron_condor",
-}
-
-LONG_PREMIUM_STRATEGIES = {"calendar_spread"}
+from core.strategy_types import LONG_PREMIUM_STRATEGIES
 
 
 def strategy_weight(config: dict[str, Any], strategy_name: str) -> float:

@@ -68,7 +68,10 @@ class BaseStrategy(ABC):
                 limits.append(int(self.params[key]))
             if key in context.underlying:
                 limits.append(int(context.underlying[key]))
-        return max(0, min(limit for limit in limits if limit >= 0))
+        non_negative_limits = [limit for limit in limits if limit >= 0]
+        if not non_negative_limits:
+            return 0
+        return min(non_negative_limits)
 
     def apply_contract_quantity(self, order: StrategyOrder, qty: int) -> StrategyOrder:
         qty = max(1, int(qty))

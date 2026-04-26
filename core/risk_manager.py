@@ -11,17 +11,7 @@ from typing import Any, Iterable
 from core.assignment_handler import calendar_front_assignment_risk, should_close_short_call_for_ex_div
 from core.file_lock import atomic_write_text, lock_path_for, locked_open
 from core.models import OptionContract, PositionSnapshot, StrategyOrder
-
-
-SHORT_PREMIUM_STRATEGIES = {
-    "cash_secured_put",
-    "covered_call",
-    "vertical_spread",
-    "iron_condor",
-    "earnings_iron_condor",
-}
-
-LONG_PREMIUM_STRATEGIES = {"calendar_spread"}
+from core.strategy_types import LONG_PREMIUM_STRATEGIES, SHORT_PREMIUM_STRATEGIES
 
 
 @dataclass(frozen=True)

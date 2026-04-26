@@ -171,35 +171,66 @@ def _remove_stock_inventory(stock_inventory: dict[str, dict[str, float]], symbol
         current["cost_basis"] = 0.0
 
 
+def _stock_market_value(
+    stock_inventory: dict[str, dict[str, float]],
+    client,
+    as_of: date,
+) -> float:
+    value = 0.0
+    for symbol, item in stock_inventory.items():
+        shares = float(item.get("shares", 0.0))
+        if shares <= 0:
+            continue
+        snapshot = client.get_underlying_snapshot(symbol, as_of=as_of)
+        price = float(snapshot.get("price", item.get("cost_basis", 0.0)))
+        value += shares * price
+    return round(value, 2)
+
+
+def _portfolio_equity(
+    *,
+    cash_balance: float,
+    stock_inventory: dict[str, dict[str, float]],
+    open_positions: list[PositionSnapshot],
+    client,
+    as_of: date,
+) -> float:
+    option_mtm = sum(position.current_pnl for position in open_positions)
+    return round(cash_balance + _stock_market_value(stock_inventory, client, as_of) + option_mtm, 2)
+
+
 def _apply_expiration_assignment(
     position: PositionSnapshot,
     stock_inventory: dict[str, dict[str, float]],
     as_of: date,
-) -> bool:
+) -> float:
     """Convert simple CSP/covered-call expirations into stock inventory.
 
-    Returns True when assignment was handled and the option should not also be
-    treated as a normal option close. Multi-leg defined-risk assignments are not
-    simulated here; those continue to close through the normal mark-to-market
-    path.
+    Returns the cash delta from the resulting stock transaction. Option P&L is
+    handled by the caller; this function only accounts for buying/selling the
+    shares created by assignment. Multi-leg defined-risk assignments are not
+    simulated here; those continue to close through the normal mark-to-market.
     """
     position_dte = min((leg.contract.days_to_expiration(as_of) for leg in position.legs), default=0)
     if position_dte > 0:
-        return False
+        return 0.0
     if position.strategy_name == "cash_secured_put" and len(position.legs) == 1:
         leg = position.legs[0]
         contract = leg.contract
         if leg.side == "sell_to_open" and contract.option_type == "put" and contract.underlying_price < contract.strike:
+            shares = 100 * leg.qty
             adjusted_basis = max(0.0, contract.strike - (position.entry_credit / (100.0 * leg.qty)))
-            _add_stock_inventory(stock_inventory, position.underlying, shares=100 * leg.qty, cost_basis=adjusted_basis)
-            return True
+            _add_stock_inventory(stock_inventory, position.underlying, shares=shares, cost_basis=adjusted_basis)
+            return round(-(contract.underlying_price * shares), 2)
     if position.strategy_name == "covered_call" and len(position.legs) == 1:
         leg = position.legs[0]
         contract = leg.contract
         if leg.side == "sell_to_open" and contract.option_type == "call" and contract.underlying_price > contract.strike:
-            _remove_stock_inventory(stock_inventory, position.underlying, shares=100 * leg.qty)
-            return True
-    return False
+            available_shares, _ = _inventory_for(position.underlying, stock_inventory)
+            shares = min(100 * leg.qty, available_shares)
+            _remove_stock_inventory(stock_inventory, position.underlying, shares=shares)
+            return round(contract.underlying_price * shares, 2)
+    return 0.0
 
 
 def _write_report(
@@ -235,19 +266,27 @@ def run_backtest(
     client = backtest_market_data_client(config)
     underlyings = load_underlyings(config)
     slippage = _slippage_settings(config)
-    current_equity = float(starting_fund)
+    cash_balance = float(starting_fund)
     closed_pnls: list[float] = []
     open_positions: list[PositionSnapshot] = []
     trade_count = 0
     rejected_reasons: dict[str, int] = {}
     stock_inventory: dict[str, dict[str, float]] = {}
-    equity_curve = [current_equity]
     start_date = start_date or (date.today() - timedelta(days=max(days, 10)))
+    equity_curve = [float(starting_fund)]
 
     for offset in range(days):
         as_of = start_date + timedelta(days=offset)
         if as_of.weekday() >= 5:
-            equity_curve.append(current_equity)
+            equity_curve.append(
+                _portfolio_equity(
+                    cash_balance=cash_balance,
+                    stock_inventory=stock_inventory,
+                    open_positions=open_positions,
+                    client=client,
+                    as_of=as_of,
+                )
+            )
             continue
 
         for position in list(open_positions):
@@ -276,20 +315,26 @@ def run_backtest(
         still_open: list[PositionSnapshot] = []
         for position in open_positions:
             if position.strategy_id in close_ids:
-                assigned = _apply_expiration_assignment(position, stock_inventory, as_of)
+                assignment_cash_delta = _apply_expiration_assignment(position, stock_inventory, as_of)
                 closed_pnls.append(position.current_pnl)
-                current_equity += position.current_pnl
-                if assigned:
-                    position.current_pnl = 0.0
+                cash_balance += position.current_pnl + assignment_cash_delta
             else:
                 still_open.append(position)
         open_positions = still_open
 
+        portfolio_equity = _portfolio_equity(
+            cash_balance=cash_balance,
+            stock_inventory=stock_inventory,
+            open_positions=open_positions,
+            client=client,
+            as_of=as_of,
+        )
+
         account = {
-            "equity": current_equity,
-            "portfolio_value": current_equity,
-            "cash": current_equity,
-            "buying_power": current_equity * 2.0,
+            "equity": portfolio_equity,
+            "portfolio_value": portfolio_equity,
+            "cash": cash_balance,
+            "buying_power": portfolio_equity * 2.0,
             "options_level": config.get("account", {}).get("options_level", 3),
         }
         for underlying in underlyings:
@@ -342,10 +387,17 @@ def run_backtest(
                 _apply_entry_slippage(position, slippage)
                 open_positions.append(position)
                 trade_count += 1
-        mtm = sum(position.current_pnl for position in open_positions)
-        equity_curve.append(round(current_equity + mtm, 2))
+        equity_curve.append(
+            _portfolio_equity(
+                cash_balance=cash_balance,
+                stock_inventory=stock_inventory,
+                open_positions=open_positions,
+                client=client,
+                as_of=as_of,
+            )
+        )
 
-    ending_equity = equity_curve[-1] if equity_curve else current_equity
+    ending_equity = equity_curve[-1] if equity_curve else float(starting_fund)
     wins = sum(1 for pnl in closed_pnls if pnl > 0)
     result = BacktestResult(
         starting_fund=starting_fund,

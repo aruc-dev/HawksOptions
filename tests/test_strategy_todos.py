@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import unittest
 from copy import deepcopy
-from datetime import date
+from datetime import date, datetime
 
 from core.alpaca_options_client import AlpacaOptionsClient
-from core.backtest_engine import run_backtest
+from core.backtest_engine import _apply_expiration_assignment, _portfolio_equity, run_backtest
 from core.config import load_config, load_underlyings
-from core.models import OptionContract, StrategyContext, StrategyOrder
+from core.models import OptionContract, OrderLeg, PositionSnapshot, StrategyContext, StrategyOrder
 from scheduler.common import build_context
 from strategies import build_enabled_strategies
 from strategies.cash_secured_put import CashSecuredPutStrategy
@@ -16,7 +16,7 @@ from strategies.selection import score_order
 from strategies.vertical_spread import VerticalSpreadStrategy
 
 
-def _contract(symbol: str = "SPY260619P00095000") -> OptionContract:
+def _contract(symbol: str = "SPY260528P00095000") -> OptionContract:
     return OptionContract(
         contract_symbol=symbol,
         underlying="SPY",
@@ -55,6 +55,11 @@ class _InventoryClient(AlpacaOptionsClient):
         return [{"symbol": "SPY", "qty": 200, "avg_entry_price": 101.25}]
 
 
+class _SnapshotClient:
+    def get_underlying_snapshot(self, symbol, as_of=None):
+        return {"symbol": symbol, "price": 92.0}
+
+
 class StrategyTodoTests(unittest.TestCase):
     def test_strategy_weight_changes_selection_score(self):
         config = load_config()
@@ -76,6 +81,16 @@ class StrategyTodoTests(unittest.TestCase):
 
         self.assertIsNotNone(order)
         self.assertEqual(order.legs[0].qty, 2)
+
+    def test_negative_contract_limits_do_not_crash_quantity(self):
+        config = deepcopy(load_config())
+        config["strategies"]["cash_secured_put"]["contracts"] = -1
+        config["strategies"]["cash_secured_put"]["max_contracts_per_underlying"] = -1
+        underlying = {"symbol": "SPY", "strategies_allowed": ["cash_secured_put"]}
+
+        order = CashSecuredPutStrategy(config).generate_order(_context(config, underlying))
+
+        self.assertIsNone(order)
 
     def test_current_iv_context_controls_iron_condor_regime_filter(self):
         config = deepcopy(load_config())
@@ -141,6 +156,46 @@ class StrategyTodoTests(unittest.TestCase):
 
         self.assertEqual(context.long_shares, 200)
         self.assertEqual(context.cost_basis, 101.25)
+
+    def test_assignment_stock_inventory_is_included_in_equity(self):
+        contract = OptionContract(
+            contract_symbol="SPY260423P00095000",
+            underlying="SPY",
+            option_type="put",
+            strike=95.0,
+            expiration=date(2026, 4, 23),
+            bid=3.0,
+            ask=3.0,
+            open_interest=500,
+            volume=50,
+            underlying_price=92.0,
+        )
+        position = PositionSnapshot(
+            strategy_id="csp-SPY-20260423",
+            strategy_name="cash_secured_put",
+            underlying="SPY",
+            legs=[OrderLeg(contract=contract, side="sell_to_open")],
+            opened_at=datetime(2026, 4, 23),
+            entry_credit=300.0,
+            max_loss=9200.0,
+            profit_take_pct=0.5,
+            loss_stop_multiple=2.0,
+            roll_threshold_delta=-0.4,
+        )
+        position.current_pnl = 0.0
+        inventory = {}
+
+        cash_delta = _apply_expiration_assignment(position, inventory, date(2026, 4, 23))
+        equity = _portfolio_equity(
+            cash_balance=100000.0 + cash_delta,
+            stock_inventory=inventory,
+            open_positions=[],
+            client=_SnapshotClient(),
+            as_of=date(2026, 4, 23),
+        )
+
+        self.assertEqual(inventory["SPY"]["shares"], 100.0)
+        self.assertEqual(equity, 100000.0)
 
     def test_fixture_backtest_replays_historical_option_universe(self):
         config = deepcopy(load_config())

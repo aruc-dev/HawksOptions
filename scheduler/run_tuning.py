@@ -91,7 +91,7 @@ def _run_once(
     result, _ = run_backtest(
         config=config,
         strategies=strategies,
-        days=max(5, days),
+        days=max(1, days),
         starting_fund=max(1000.0, fund),
         start_date=start_date,
     )
@@ -144,8 +144,9 @@ def main(argv: list[str] | None = None) -> int:
         overrides = fixed_overrides + list(combo)
         label = args.label if len(combinations) == 1 else f"{args.label}-{index}"
         if args.walk_forward:
-            train_days = max(5, args.days // 2)
-            test_days = max(5, args.days - train_days)
+            total_days = max(5, args.days)
+            train_days = max(1, total_days // 2)
+            test_days = total_days - train_days
             train_start = start
             test_start = (start + timedelta(days=train_days)) if start else None
             runs.append(
@@ -175,7 +176,7 @@ def main(argv: list[str] | None = None) -> int:
                     base_config=base_config,
                     overrides=overrides,
                     label=label,
-                    days=args.days,
+                    days=max(5, args.days),
                     fund=args.fund,
                     start_date=start,
                 )
