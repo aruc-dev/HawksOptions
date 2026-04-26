@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from core.assignment_handler import calendar_front_assignment_risk, should_close_short_call_for_ex_div
-from core.file_lock import atomic_write_text, locked_open
+from core.file_lock import atomic_write_text, lock_path_for, locked_open
 from core.models import OptionContract, PositionSnapshot, StrategyOrder
 
 
@@ -272,8 +272,11 @@ def daily_loss_status(
 def read_daily_baseline(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
-    with locked_open(path, "r", lock="shared") as handle:
-        return json.load(handle)
+    with locked_open(lock_path_for(path), "a", lock="shared"):
+        if not path.exists():
+            return None
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
 
 
 def write_daily_baseline(path: Path, portfolio_value: float, *, as_of: datetime | None = None) -> dict[str, Any]:

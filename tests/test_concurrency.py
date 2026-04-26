@@ -25,6 +25,7 @@ from pathlib import Path
 import core.file_lock as file_lock
 from core.iv_rank_tracker import append_iv_snapshot, load_iv_history, prune_iv_history
 from core.order_executor import load_positions, persist_open_order, save_positions
+from core.risk_manager import read_daily_baseline, write_daily_baseline
 from core.trade_log import TRADE_LOG_FIELDS, append_trade_rows, read_trade_rows
 
 
@@ -142,6 +143,10 @@ def _append_iv_worker(args):
     return symbol
 
 
+def _read_daily_baseline_worker(path):
+    read_daily_baseline(Path(path))
+
+
 class ConcurrencyTests(unittest.TestCase):
     def test_locked_open_flushes_writer_before_unlocking(self):
         """A waiting process must see writes before it acquires the lock."""
@@ -201,6 +206,29 @@ class ConcurrencyTests(unittest.TestCase):
             self.assertTrue(blocked_on_lock)
             self.assertEqual(process.exitcode, 0)
             self.assertEqual(load_iv_history(path, "SPY"), [0.2])
+
+    def test_daily_baseline_read_waits_for_sidecar_lock(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "daily_baseline.json"
+            write_daily_baseline(
+                path,
+                10000.0,
+                as_of=datetime(2026, 4, 23, 13, 30, tzinfo=timezone.utc),
+            )
+
+            with file_lock.locked_open(file_lock.lock_path_for(path), "a", lock="exclusive"):
+                process = multiprocessing.Process(
+                    target=_read_daily_baseline_worker,
+                    args=(str(path),),
+                )
+                process.start()
+                process.join(0.25)
+                blocked_on_lock = process.is_alive()
+
+            process.join(5)
+            self.assertTrue(blocked_on_lock)
+            self.assertEqual(process.exitcode, 0)
+            self.assertEqual(read_daily_baseline(path)["portfolio_value"], 10000.0)
 
     def test_concurrent_trade_log_appends_keep_one_header(self):
         """Multiple processes appending simultaneously must produce a

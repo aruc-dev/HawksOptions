@@ -93,6 +93,14 @@ def _leg_slippage_cost(leg, slip: dict[str, float]) -> float:
     return round(cost_per_share * 100.0 * qty + slip["commission_per_contract"] * qty, 4)
 
 
+def _apply_entry_slippage(position: PositionSnapshot, slippage: dict[str, float]) -> PositionSnapshot:
+    # Slippage always worsens the opening fill: less credit for credit trades,
+    # and a larger debit for debit trades.
+    entry_slippage = sum(_leg_slippage_cost(leg, slippage) for leg in position.legs)
+    position.entry_credit = round(position.entry_credit - entry_slippage, 2)
+    return position
+
+
 def _mark_to_market(
     position: PositionSnapshot,
     client: AlpacaOptionsClient,
@@ -249,11 +257,7 @@ def run_backtest(
                     order,
                     opened_at=datetime.combine(as_of, time(10, 0), tzinfo=timezone.utc),
                 )
-                # Charge entry slippage by trimming recorded credit. A
-                # debit position has negative entry_credit; slippage
-                # always increases the cost (less credit / more debit).
-                entry_slippage = sum(_leg_slippage_cost(leg, slippage) for leg in position.legs)
-                position.entry_credit = round(position.entry_credit - entry_slippage, 2)
+                _apply_entry_slippage(position, slippage)
                 open_positions.append(position)
                 trade_count += 1
                 break
