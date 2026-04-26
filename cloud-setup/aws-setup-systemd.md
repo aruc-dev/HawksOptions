@@ -226,6 +226,18 @@ Keep `mode: paper` until the full paper-trading validation period is complete.
 Set `market_data.use_sample_data: false` when you want the scheduler to use
 Alpaca instead of deterministic sample data.
 
+**Optional local config:** If you need machine-specific settings that should
+not be committed to git, create `config/config.local.yaml`. When present, this
+file is used **in full** instead of `config/config.yaml` — it must contain all
+required configuration keys, not just the ones you want to change. Start by
+copying the committed file and editing from there. This file is git-ignored and
+will never be accidentally committed or overwritten by a `git pull`.
+
+```bash
+cp config/config.yaml config/config.local.yaml
+nano config/config.local.yaml   # edit as needed — all keys must be present
+```
+
 Do not create `config/.env` on EC2 for production trading. The systemd setup
 loads credentials from `/dev/shm/.hawksoptions.env`, which is populated from
 AWS Secrets Manager at boot.
@@ -699,8 +711,9 @@ Important runtime files:
 | `reports/` | Backtest and EOD reports |
 | `logs/` | Dashboard access logs |
 
-Back up `data/`, `reports/`, `config/config.yaml`, and
-`config/underlyings.yaml`. Do not back up `/dev/shm/.hawksoptions.env`.
+Back up `data/`, `reports/`, `config/config.yaml`, `config/config.local.yaml`
+(if present), and `config/underlyings.yaml`. Do not back up
+`/dev/shm/.hawksoptions.env`.
 
 Example lightweight backup:
 
@@ -709,7 +722,9 @@ cd /home/ec2-user
 tar --exclude='HawksOptions/.venv' \
     --exclude='HawksOptions/__pycache__' \
     -czf "hawksoptions-backup-$(date -u +%Y%m%dT%H%M%SZ).tgz" \
-    HawksOptions/data HawksOptions/reports HawksOptions/config/config.yaml HawksOptions/config/underlyings.yaml
+    HawksOptions/data HawksOptions/reports HawksOptions/config/config.yaml \
+    $(test -f HawksOptions/config/config.local.yaml && echo HawksOptions/config/config.local.yaml) \
+    HawksOptions/config/underlyings.yaml
 ```
 
 ---

@@ -20,7 +20,7 @@ without sharing runtime state or mutating the reference repo.
 ```text
 HawksOptions/
 ├── assets/                  # branding and visual assets
-├── config/                  # config.yaml, .env.example, underlyings.yaml
+├── config/                  # config.yaml, config.local.yaml (optional full replacement, git-ignored), .env.example, underlyings.yaml
 ├── core/                    # options primitives, risk engine, trade logging
 ├── strategies/              # CSP, covered call, vertical spread, iron condor
 ├── ai/                      # veto-only AI helpers (optional)
