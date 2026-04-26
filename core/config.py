@@ -10,6 +10,13 @@ import yaml
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 CONFIG_PATH = BASE_DIR / "config" / "config.yaml"
+LOCAL_CONFIG_PATH = BASE_DIR / "config" / "config.local.yaml"
+
+
+def _resolve_config_path(path: Path | None) -> Path:
+    if path is not None:
+        return path
+    return LOCAL_CONFIG_PATH if LOCAL_CONFIG_PATH.exists() else CONFIG_PATH
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
@@ -20,8 +27,8 @@ def load_yaml(path: Path) -> dict[str, Any]:
     return payload
 
 
-def load_config(path: Path = CONFIG_PATH) -> dict[str, Any]:
-    config = load_yaml(path)
+def load_config(path: Path | None = None) -> dict[str, Any]:
+    config = load_yaml(_resolve_config_path(path))
     config.setdefault("mode", "paper")
     config.setdefault("account", {})
     config.setdefault("gates", {})

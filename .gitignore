@@ -19,6 +19,7 @@ reports/*
 
 local/
 config/.env
+config/config.local.yaml
 .coverage
 
 # Beads local task tracking
