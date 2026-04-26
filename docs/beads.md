@@ -1,6 +1,7 @@
 # Beads Support
 
-This repository supports `bd` (Beads) for repo-local task tracking.
+This repository supports `bd` (Beads) for repo-local task tracking. Agents must
+check Beads at the start of work, before editing code or docs.
 
 ## Install
 
@@ -40,11 +41,22 @@ Use JSON output when calling `bd` from automation or an agent session:
 
 ```bash
 bd ready --json
-bd create "Title" -t task -p 2 --json
 bd update <id> --claim --json
+bd create "Title" -t task -p 2 --json
 bd show <id> --json
 bd close <id> --reason "Done" --json
 ```
+
+Required agent sequence:
+
+1. Run `bd ready --json` from the repo root.
+2. If it fails because Beads is not initialized, run `./scripts/init_beads.sh`
+   and rerun `bd ready --json`.
+3. Claim any matching ready task with `bd update <id> --claim --json`.
+4. If no matching task exists and the work is not trivial, create one with
+   `bd create "<title>" -t task -p 2 --json`.
+5. Note unavailable Beads tooling in the handoff if `bd` cannot be installed or
+   initialized.
 
 If you discover follow-up work, record it in Beads instead of adding markdown
 task lists to the repo.

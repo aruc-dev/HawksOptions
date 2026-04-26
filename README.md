@@ -51,8 +51,17 @@ real Alpaca keys are added.
 ## Optional: Beads Task Tracking
 
 This repo includes repo-level support for `bd` (Beads), an agent-oriented task
-tracker. Install `bd`, run `./scripts/init_beads.sh`, then use `bd ready --json`
-to inspect or claim work.
+tracker. Agent sessions should run `bd ready --json` before making changes. If
+the checkout is not initialized, run `./scripts/init_beads.sh`, then rerun
+`bd ready --json`.
+
+Use Beads for non-trivial tracked work:
+
+```bash
+bd ready --json
+bd update <id> --claim --json
+bd create "Title" -t task -p 2 --json
+```
 
 See [docs/beads.md](docs/beads.md) for setup and workflow details.
 
@@ -97,10 +106,16 @@ for the deployment pattern.
 
 Before publishing or deploying:
 
+- add focused unit tests for every functional change
+- run the full unit-test suite
+- run lint checks
+- validate the change with the deterministic backtest
+
 ```bash
 python3 -m unittest discover -v
 python3 -W error::DeprecationWarning -m unittest discover
-python3 -m compileall core strategies scheduler ai tests dashboard
+ruff check .
+python3 -m compileall core strategies scheduler ai tests dashboard scripts
 python3 scheduler/run_backtest.py --days 30 --fund 10000
 python3 scheduler/run_scan.py --dry-run
 python3 scheduler/run_risk_check.py --dry-run

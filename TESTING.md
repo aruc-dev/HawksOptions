@@ -2,10 +2,21 @@
 
 ## Required Checks
 
+Functional changes must include focused unit tests for the behavior being added
+or changed. Run the full validation gate before publishing or deploying:
+
+Start by checking tracked work in Beads:
+
+```bash
+bd ready --json
+bd update <id> --claim --json
+```
+
 ```bash
 python3 -m unittest discover -v
 python3 -W error::DeprecationWarning -m unittest discover
-python3 -m compileall core strategies scheduler ai tests dashboard
+ruff check .
+python3 -m compileall core strategies scheduler ai tests dashboard scripts
 python3 scheduler/run_backtest.py --days 30 --fund 10000
 ```
 

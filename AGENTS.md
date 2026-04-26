@@ -32,8 +32,14 @@ python3 scheduler/run_backtest.py --days 30 --fund 10000
 
 This repo supports `bd` (Beads) for repo-local task tracking.
 
-- If `bd` is installed and initialized, prefer it over markdown task lists for
-  follow-up work.
+- At the start of every agent session, run `bd ready --json` from the repo
+  root before making changes.
+- If `bd ready --json` fails because Beads is not initialized, run
+  `./scripts/init_beads.sh`, then rerun `bd ready --json`.
+- Claim matching ready work with `bd update <id> --claim --json` before
+  implementation. If no matching task exists and the work is not trivial,
+  create one with `bd create "<title>" -t task -p 2 --json`.
+- Record discovered follow-up work in Beads instead of markdown task lists.
 - Beads does not relax any trading or dashboard safety rules in this file.
 - Use JSON output for automation: `bd ready --json`, `bd show <id> --json`,
   `bd update <id> --claim --json`.
@@ -43,6 +49,7 @@ Bootstrap once per checkout:
 ```bash
 ./scripts/init_beads.sh
 bd ready --json
+bd update <id> --claim --json
 ```
 
 ## Files That Matter
@@ -58,9 +65,17 @@ bd ready --json
 
 Every logic change requires:
 
+- focused unit tests for the functional behavior being added or changed
+- the full unit-test suite passing
+- lint checks passing
+- deterministic backtest validation
+
 ```bash
 python3 -m unittest discover -v
+python3 -W error::DeprecationWarning -m unittest discover
+ruff check .
+python3 -m compileall core strategies scheduler ai tests dashboard scripts
 python3 scheduler/run_backtest.py --days 30 --fund 10000
 ```
 
-If either fails, fix the issue before handing work off.
+If any check fails, fix the issue before handing work off.

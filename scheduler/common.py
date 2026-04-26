@@ -35,6 +35,35 @@ def current_positions(paths: dict[str, Path]) -> list[PositionSnapshot]:
     return load_positions(paths["positions"])
 
 
+def _short_call_extrinsic(legs) -> float:
+    """Return the smallest remaining extrinsic across ITM short call legs.
+
+    For ex-dividend assignment risk, what matters is whether *any*
+    short call has dividend > extrinsic. Picking the minimum across the
+    short call legs gives the conservative (closest to assignment)
+    value. Returns 0.0 if there are no ITM short call legs; the ex-div
+    handler should only act when there is an in-the-money short call,
+    so the no-ITM-short-call case is ignored by that call-specific
+    gating.
+    """
+    extrinsic_values: list[float] = []
+    for leg in legs:
+        if leg.side != "sell_to_open":
+            continue
+        contract = leg.contract
+        if contract.option_type != "call":
+            continue
+        if not contract.is_itm():
+            continue
+        intrinsic = max(0.0, float(contract.underlying_price) - float(contract.strike))
+        mid = float(contract.mid_price())
+        extrinsic = max(0.0, mid - intrinsic)
+        extrinsic_values.append(extrinsic)
+    if not extrinsic_values:
+        return 0.0
+    return min(extrinsic_values)
+
+
 def refresh_positions(
     positions: list[PositionSnapshot],
     *,
@@ -57,9 +86,15 @@ def refresh_positions(
             else:
                 close_cost -= contract.mid_price() * 100.0 * leg.qty
         position.legs = refreshed_legs
-        position.current_close_cost = round(max(close_cost, 0.0), 2)
+        position.current_close_cost = round(close_cost, 2)
         position.current_pnl = round(position.entry_credit - position.current_close_cost, 2)
         position.short_leg_itm = short_leg_itm
+        # Recompute remaining extrinsic on short calls so the ex-div
+        # close logic (assignment_handler.should_close_short_call_for_ex_div)
+        # operates on current data, not the stale 0.0 default.
+        position.remaining_extrinsic_value = round(
+            _short_call_extrinsic(refreshed_legs), 4
+        )
         refreshed.append(position)
     return refreshed
 

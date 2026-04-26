@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from core.file_lock import atomic_write_text, lock_path_for, locked_open
 from core.models import OrderLeg, PositionSnapshot, StrategyOrder
 from core.trade_log import append_trade_rows
 
@@ -126,7 +127,7 @@ def position_from_order(order: StrategyOrder, *, opened_at: datetime | None = No
     )
 
 
-def load_positions(path: Path) -> list[PositionSnapshot]:
+def _load_positions_unlocked(path: Path) -> list[PositionSnapshot]:
     if not path.exists():
         return []
     with open(path, "r", encoding="utf-8") as handle:
@@ -136,10 +137,20 @@ def load_positions(path: Path) -> list[PositionSnapshot]:
     return [PositionSnapshot.from_dict(item) for item in payload if isinstance(item, dict)]
 
 
+def load_positions(path: Path) -> list[PositionSnapshot]:
+    with locked_open(lock_path_for(path), "a", lock="shared"):
+        return _load_positions_unlocked(path)
+
+
 def save_positions(path: Path, positions: list[PositionSnapshot]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump([position.as_dict() for position in positions], handle, indent=2)
+    payload = json.dumps([position.as_dict() for position in positions], indent=2)
+    with locked_open(lock_path_for(path), "a", lock="exclusive"):
+        atomic_write_text(path, payload, lock=False)
+
+
+def _save_positions_unlocked(path: Path, positions: list[PositionSnapshot]) -> None:
+    payload = json.dumps([position.as_dict() for position in positions], indent=2)
+    atomic_write_text(path, payload, lock=False)
 
 
 def persist_open_order(
@@ -151,10 +162,20 @@ def persist_open_order(
     positions_path: Path,
     timestamp: datetime | None = None,
 ) -> PositionSnapshot:
+    """Append a trade log row and persist the new position.
+
+    Trade-log appends and the positions read-modify-write each happen
+    under file locks so concurrent schedulers cannot interleave with
+    this critical section. We append the trade log first (forward-only,
+    easy to recover) before rewriting positions.json so that, if a
+    crash lands between the two, the trade log has the source of truth
+    and positions.json can be rebuilt from it.
+    """
     timestamp = timestamp or datetime.now(timezone.utc)
     append_trade_rows(trade_log_path, trade_log_rows_from_order(order, mode=mode, order_id=order_id, timestamp=timestamp))
-    positions = load_positions(positions_path)
-    position = position_from_order(order, opened_at=timestamp)
-    positions.append(position)
-    save_positions(positions_path, positions)
+    with locked_open(lock_path_for(positions_path), "a", lock="exclusive"):
+        positions = _load_positions_unlocked(positions_path)
+        position = position_from_order(order, opened_at=timestamp)
+        positions.append(position)
+        _save_positions_unlocked(positions_path, positions)
     return position
