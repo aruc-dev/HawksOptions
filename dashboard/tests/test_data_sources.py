@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from dashboard import data_sources
+from dashboard.config import DashboardConfig
 
 
 class DataSourceTests(unittest.TestCase):
@@ -37,6 +38,15 @@ class DataSourceTests(unittest.TestCase):
             out = data_sources.read_latest_health_snapshot(Path(tmp))
         self.assertFalse(out["ok"])
 
+    def test_health_snapshot_dir_uses_configured_reports_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.yaml"
+            reports_dir = Path(tmp) / "custom_reports"
+            config_path.write_text(f"reporting:\n  reports_dir: {reports_dir}\n", encoding="utf-8")
+
+            cfg = DashboardConfig(config_path)
+            self.assertEqual(cfg.health_snapshot_dir, reports_dir / "health_snapshots")
+
     def test_read_latest_rejection_summary(self):
         with tempfile.TemporaryDirectory() as tmp:
             reports = Path(tmp)
@@ -56,6 +66,19 @@ class DataSourceTests(unittest.TestCase):
         self.assertEqual(out["summary"]["total_rejected"], 2)
         self.assertEqual(out["summary"]["by_reason"]["dte_gate_failed"], 2)
         self.assertEqual(out["summary"]["by_strategy"]["iron_condor"], 2)
+
+    def test_read_latest_rejection_summary_handles_invalid_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reports = Path(tmp)
+            scan_dir = reports / "candidate_scans"
+            scan_dir.mkdir()
+            (scan_dir / "scan_2026-04-23_100000000000Z.json").write_text("{", encoding="utf-8")
+
+            out = data_sources.read_latest_rejection_summary(reports)
+
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["summary"]["total_rejected"], 0)
+        self.assertIn("error", out)
 
     def test_read_dashboard_analytics_uses_latest_reports(self):
         with tempfile.TemporaryDirectory() as tmp:

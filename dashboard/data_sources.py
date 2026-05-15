@@ -114,8 +114,16 @@ def read_latest_rejection_summary(reports_dir: Path | None = None) -> dict[str, 
     path = latest_candidate_scan_path(reports_dir)
     if path is None:
         return {"ok": False, "path": None, "summary": {"total_rejected": 0, "by_reason": {}, "by_strategy": {}, "by_stage": {}}}
-    with open(path, "r", encoding="utf-8") as handle:
-        payload = json.load(handle)
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "path": str(path),
+            "summary": {"total_rejected": 0, "by_reason": {}, "by_strategy": {}, "by_stage": {}},
+            "error": str(exc),
+        }
     rejected = payload.get("rejected", []) if isinstance(payload, dict) else []
     by_reason: dict[str, int] = defaultdict(int)
     by_strategy: dict[str, int] = defaultdict(int)

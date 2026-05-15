@@ -7,6 +7,7 @@ from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from core.alpaca_options_client import AlpacaOptionsClient
 from core.backtest_engine import _apply_expiration_assignment, _portfolio_equity, run_backtest
@@ -19,6 +20,7 @@ from core.open_interest_analytics import max_pain_strike, open_interest_context
 from core.risk_manager import continuous_risk_checks, pre_trade_check
 from scheduler.common import build_context
 from strategies import build_enabled_strategies
+from strategies import selection as selection_module
 from strategies.broken_wing_butterfly import BrokenWingButterflyStrategy
 from strategies.butterfly import ButterflyStrategy
 from strategies.cash_secured_put import CashSecuredPutStrategy
@@ -141,6 +143,68 @@ class StrategyTodoTests(unittest.TestCase):
         self.assertGreater(liquid_order.metadata["selection"]["liquidity_score"], illiquid_order.metadata["selection"]["liquidity_score"])
         self.assertGreater(liquid_order.metadata["selection"]["dte_fit_score"], illiquid_order.metadata["selection"]["dte_fit_score"])
         self.assertIn("score_components", liquid_order.metadata["selection"])
+
+    def test_selection_scoring_ignores_malformed_weight_overrides(self):
+        config = load_config()
+        context = _context(config)
+        config["selection_scoring"] = {"weights": {"liquidity": "bad", "unknown": 10.0}}
+        order = StrategyOrder(
+            "cash_secured_put",
+            "malformed-weights",
+            "SPY",
+            [OrderLeg(_contract(), "sell_to_open")],
+            100.0,
+            20.0,
+            100.0,
+            0.5,
+            2.0,
+            None,
+            55.0,
+        )
+
+        score = score_order(order, context, config)
+
+        self.assertGreater(score, 0.0)
+        self.assertEqual(order.metadata["selection"]["score_weights"]["liquidity"], 0.2)
+
+    def test_selection_scoring_caches_context_wide_analytics(self):
+        selection_module._CONTEXT_ANALYTICS_CACHE.clear()
+        config = load_config()
+        context = _context(config)
+        first_order = StrategyOrder(
+            "cash_secured_put",
+            "first",
+            "SPY",
+            [OrderLeg(_contract(), "sell_to_open")],
+            100.0,
+            20.0,
+            100.0,
+            0.5,
+            2.0,
+            None,
+            55.0,
+        )
+        second_order = StrategyOrder(
+            "cash_secured_put",
+            "second",
+            "SPY",
+            [OrderLeg(_contract("SPY260528P00090000"), "sell_to_open")],
+            100.0,
+            20.0,
+            100.0,
+            0.5,
+            2.0,
+            None,
+            55.0,
+        )
+
+        with patch.object(selection_module, "volatility_surface_metrics", wraps=selection_module.volatility_surface_metrics) as surface, \
+                patch.object(selection_module, "open_interest_context", wraps=selection_module.open_interest_context) as oi_context:
+            score_order(first_order, context, config)
+            score_order(second_order, context, config)
+
+        self.assertEqual(surface.call_count, 1)
+        self.assertEqual(oi_context.call_count, 1)
 
     def test_expanded_selection_score_accounts_for_portfolio_greek_room(self):
         config = load_config()

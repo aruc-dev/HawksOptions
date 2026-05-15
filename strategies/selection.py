@@ -28,6 +28,8 @@ _DEFAULT_SCORING_WEIGHTS = {
     "vega_safety": 0.10,
     "portfolio_greek_room": 0.10,
 }
+_CONTEXT_ANALYTICS_CACHE_MAX_SIZE = 512
+_CONTEXT_ANALYTICS_CACHE: dict[tuple[Any, ...], dict[str, Any]] = {}
 
 
 def strategy_weight(config: dict[str, Any], strategy_name: str) -> float:
@@ -84,23 +86,12 @@ def score_order(order: StrategyOrder, context: StrategyContext, config: dict[str
     current_iv = max(float(context.current_iv or 0.0), 0.01)
     implied_realized_spread = round(current_iv - float(context.realized_vol_20d or 0.0), 6)
     regime_edge = max(0.0, implied_realized_spread / current_iv)
-    surface = volatility_surface_metrics(
-        context.chain,
-        underlying_price=context.underlying_price,
-        as_of=context.as_of,
-    )
-    oi_context = open_interest_context(context.chain, underlying_price=context.underlying_price)
-    dealer_context = dealer_positioning_context(
-        context.underlying,
-        as_of=context.as_of,
-        underlying_price=context.underlying_price,
-    )
-    technical_context = technical_regime_context(context.underlying)
-    for key in ("trend_20d", "trend_50d", "rsi_14", "price_vs_sma_50"):
-        value = getattr(context, key)
-        if value is not None:
-            technical_context[key] = value
-    event_context = event_risk_context(context.underlying)
+    analytics = _context_analytics(context)
+    surface = analytics["surface"]
+    oi_context = analytics["open_interest"]
+    dealer_context = analytics["dealer_positioning"]
+    technical_context = dict(analytics["technical_regime"])
+    event_context = analytics["event_risk"]
     max_pain_distance = oi_context.get("max_pain_distance_pct")
     max_pain_alignment = 0.0
     if max_pain_distance is not None:
@@ -169,11 +160,63 @@ def score_order(order: StrategyOrder, context: StrategyContext, config: dict[str
 
 def _scoring_weights(config: dict[str, Any]) -> dict[str, float]:
     weights = dict(_DEFAULT_SCORING_WEIGHTS)
-    overrides = config.get("selection_scoring", {}).get("weights", {})
+    section = config.get("selection_scoring", {})
+    if not isinstance(section, dict):
+        return weights
+    overrides = section.get("weights", {})
+    if not isinstance(overrides, dict):
+        return weights
     for key, value in overrides.items():
-        if key in weights:
+        if key not in weights:
+            continue
+        try:
             weights[key] = float(value)
+        except (TypeError, ValueError):
+            continue
     return weights
+
+
+def _context_analytics(context: StrategyContext) -> dict[str, Any]:
+    key = _context_analytics_cache_key(context)
+    cached = _CONTEXT_ANALYTICS_CACHE.get(key)
+    if cached is not None:
+        return cached
+    technical_context = technical_regime_context(context.underlying)
+    for field_name in ("trend_20d", "trend_50d", "rsi_14", "price_vs_sma_50"):
+        value = getattr(context, field_name)
+        if value is not None:
+            technical_context[field_name] = value
+    analytics = {
+        "surface": volatility_surface_metrics(
+            context.chain,
+            underlying_price=context.underlying_price,
+            as_of=context.as_of,
+        ),
+        "open_interest": open_interest_context(context.chain, underlying_price=context.underlying_price),
+        "dealer_positioning": dealer_positioning_context(
+            context.underlying,
+            as_of=context.as_of,
+            underlying_price=context.underlying_price,
+        ),
+        "technical_regime": technical_context,
+        "event_risk": event_risk_context(context.underlying),
+    }
+    if len(_CONTEXT_ANALYTICS_CACHE) >= _CONTEXT_ANALYTICS_CACHE_MAX_SIZE:
+        _CONTEXT_ANALYTICS_CACHE.clear()
+    _CONTEXT_ANALYTICS_CACHE[key] = analytics
+    return analytics
+
+
+def _context_analytics_cache_key(context: StrategyContext) -> tuple[Any, ...]:
+    return (
+        id(context),
+        id(context.chain),
+        len(context.chain),
+        context.underlying.get("symbol"),
+        context.underlying_price,
+        context.as_of,
+        tuple(contract.contract_symbol for contract in context.chain[:20]),
+    )
 
 
 def _clamp(value: float, lower: float = 0.0, upper: float = 1.0) -> float:

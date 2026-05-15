@@ -71,6 +71,18 @@ class DashboardAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["candidate_funnel"]["candidate_count"], 0)
 
+    def test_analytics_endpoint_hides_internal_exceptions(self):
+        from dashboard import app as app_module
+
+        with patch.object(app_module, "get_account_summary", return_value={"portfolio_value": 100000.0}), \
+                patch.object(app_module, "read_positions_snapshot", return_value=[]), \
+                patch.object(app_module, "read_dashboard_analytics", side_effect=RuntimeError("stack trace detail")):
+            response = self.client.get("/api/analytics")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["ok"])
+        self.assertNotIn("stack trace detail", response.text)
+
     def test_no_mutation_endpoints_exist(self):
         from dashboard.app import create_app
 

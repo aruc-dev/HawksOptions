@@ -97,7 +97,7 @@ def create_app() -> FastAPI:
     async def api_analytics(_: str = Depends(require_auth)) -> dict[str, Any]:
         account = get_account_summary()
         positions = read_positions_snapshot()
-        return read_dashboard_analytics(positions, account)
+        return _safe_dashboard_analytics(positions, account)
 
     return app
 
@@ -130,12 +130,23 @@ def _build_state_snapshot() -> dict[str, Any]:
         "daily_loss_headroom": daily_loss_headroom(read_daily_baseline(), account.get("portfolio_value", 0.0), cfg().daily_loss_limit_pct),
         "strategies": strategy_summary(rows, lookback_days=30),
         "rejections": read_latest_rejection_summary(),
-        "analytics": read_dashboard_analytics(position_rows, account),
+        "analytics": _safe_dashboard_analytics(position_rows, account),
         "recent_trades": [row for row in rows if str(row.get("status", "")).lower() == "closed"][:10],
         "ai_activity": read_ai_activity(),
         "health": health,
         "alpaca_reachable": reachable,
     }
+
+
+def _safe_dashboard_analytics(position_rows: list[dict[str, Any]], account: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return read_dashboard_analytics(position_rows, account)
+    except Exception:
+        log.exception("dashboard analytics build failed")
+        return {
+            "ok": False,
+            "error": "Dashboard analytics unavailable. Check server logs.",
+        }
 
 
 def _build_health() -> dict[str, Any]:
