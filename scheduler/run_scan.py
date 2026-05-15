@@ -19,13 +19,18 @@ from ai.news_gate import evaluate_news_gate
 from ai.openai_client import critique_with_llm
 from ai.trade_idea_critic import critique_trade
 from core.models import StrategyOrder
-from core.order_executor import execute_order, persist_open_order
+from core.order_executor import execute_order, persist_open_order, position_from_order
 from core.risk_manager import pre_trade_check
 from scheduler.common import build_context, configured_underlyings, current_positions, load_runtime
 from strategies import build_enabled_strategies
-from strategies.selection import score_order, select_best_order
+from strategies.selection import build_candidate, rank_candidates
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _remaining_entry_slots(config: dict[str, Any], open_position_count: int) -> int:
+    max_open = int(config.get("account", {}).get("max_open_strategies", 8))
+    return max(0, max_open - open_position_count)
 
 
 def _ai_section(config: dict[str, Any]) -> dict[str, Any]:
@@ -172,6 +177,7 @@ def scan_market(*, config: dict[str, Any], as_of: date | None = None, dry_run: b
     account = client.get_account()
     positions = current_positions(paths)
     strategies = build_enabled_strategies(config)
+    candidate_pool = []
     accepted = []
     rejected = []
     for underlying in configured_underlyings(config):
@@ -184,10 +190,9 @@ def scan_market(*, config: dict[str, Any], as_of: date | None = None, dry_run: b
             as_of=as_of,
         )
         # Cheap, local structural critique runs per candidate so it can feed
-        # into pre-trade gating. The expensive external AI checks
-        # (NewsAPI + OpenAI) are deferred until *after* select_best_order so
-        # we only pay for them on the single candidate we might execute.
-        candidates: list[tuple[float, StrategyOrder, str]] = []
+        # into pre-trade gating. Expensive external AI checks are deferred
+        # until after global ranking so we only pay for candidates that might
+        # actually execute.
         for strategy in strategies:
             order = strategy.generate_order(context)
             if order is None:
@@ -212,41 +217,98 @@ def scan_market(*, config: dict[str, Any], as_of: date | None = None, dry_run: b
                     }
                 )
                 continue
-            candidates.append((score_order(order, context, config), order, structural_severity))
-        best = select_best_order([(s, o) for s, o, _ in candidates])
-        if best is None:
+            candidate_pool.append(
+                build_candidate(
+                    order,
+                    context=context,
+                    config=config,
+                    structural_severity=structural_severity,
+                    warnings=decision.warnings,
+                )
+            )
+
+    ranked_candidates = rank_candidates(candidate_pool)
+    selected_underlyings = {position.underlying for position in positions}
+    remaining_slots = _remaining_entry_slots(config, len(positions))
+    for candidate in ranked_candidates:
+        if remaining_slots <= 0:
+            break
+        if candidate.underlying in selected_underlyings:
             continue
-        # Recover the structural_severity that travelled with the winning order.
-        structural_severity = next(
-            (sev for _, o, sev in candidates if o is best), "none"
+        decision = pre_trade_check(
+            candidate.order,
+            account=account,
+            config=config,
+            open_positions=positions,
+            as_of=as_of,
         )
-        if not best.ai_veto_reason:
+        if not decision.accepted:
+            rejected.append(
+                {
+                    "underlying": candidate.underlying,
+                    "strategy": candidate.strategy_name,
+                    "reasons": decision.reasons,
+                    "stage": "post_selection",
+                }
+            )
+            continue
+        if not candidate.order.ai_veto_reason:
             external = evaluate_external_ai(
-                best,
+                candidate.order,
                 config=config,
-                structural_severity=structural_severity,
+                structural_severity=candidate.structural_severity,
             )
             external_reason = str(external.get("veto_reason") or "")
             if external_reason:
                 # Veto-only: external checks can add a veto reason but
                 # never clear an existing structural one.
-                best.ai_veto_reason = external_reason
-        order = best
-        result = execute_order(client, order, dry_run=dry_run)
-        accepted.append({"underlying": underlying["symbol"], "strategy": order.strategy_name, "order": result})
+                candidate.order.ai_veto_reason = external_reason
+        decision = pre_trade_check(
+            candidate.order,
+            account=account,
+            config=config,
+            open_positions=positions,
+            as_of=as_of,
+        )
+        if not decision.accepted:
+            rejected.append(
+                {
+                    "underlying": candidate.underlying,
+                    "strategy": candidate.strategy_name,
+                    "reasons": decision.reasons,
+                    "stage": "external_ai",
+                }
+            )
+            continue
+        result = execute_order(client, candidate.order, dry_run=dry_run)
+        accepted.append(
+            {
+                "underlying": candidate.underlying,
+                "strategy": candidate.strategy_name,
+                "score": round(float(candidate.score), 6),
+                "selection": dict(candidate.order.metadata.get("selection", {})),
+                "order": result,
+            }
+        )
         if not dry_run:
             position = persist_open_order(
-                order=order,
+                order=candidate.order,
                 mode=str(config.get("mode", "paper")),
                 order_id=str(result["id"]),
                 trade_log_path=paths["trade_log"],
                 positions_path=paths["positions"],
             )
-            positions.append(position)
+        else:
+            position = position_from_order(candidate.order)
+        positions.append(position)
+        selected_underlyings.add(candidate.underlying)
+        remaining_slots -= 1
     return {
         "as_of": as_of.isoformat(),
+        "candidate_count": len(ranked_candidates),
         "accepted_count": len(accepted),
         "rejected_count": len(rejected),
+        "ranked_candidates": [candidate.summary() for candidate in ranked_candidates],
         "accepted": accepted,
         "rejected": rejected,
     }

@@ -14,7 +14,7 @@ from core.historical_market_data import backtest_market_data_client
 from core.models import PositionSnapshot, StrategyContext
 from core.order_executor import position_from_order
 from core.risk_manager import continuous_risk_checks, pre_trade_check
-from strategies.selection import score_order, select_best_order
+from strategies.selection import build_candidate, rank_candidates
 
 
 @dataclass(frozen=True)
@@ -337,6 +337,7 @@ def run_backtest(
             "buying_power": portfolio_equity * 2.0,
             "options_level": config.get("account", {}).get("options_level", 3),
         }
+        candidate_pool = []
         for underlying in underlyings:
             symbol = underlying["symbol"]
             if any(position.underlying == symbol for position in open_positions):
@@ -361,7 +362,6 @@ def run_backtest(
                 long_shares=long_shares,
                 cost_basis=cost_basis,
             )
-            candidates: list[tuple[float, Any]] = []
             for strategy in strategies:
                 order = strategy.generate_order(context)
                 if order is None:
@@ -377,16 +377,33 @@ def run_backtest(
                     for reason in decision.reasons:
                         rejected_reasons[reason] = rejected_reasons.get(reason, 0) + 1
                     continue
-                candidates.append((score_order(order, context, config), order))
-            order = select_best_order(candidates)
-            if order is not None:
-                position = position_from_order(
-                    order,
-                    opened_at=datetime.combine(as_of, time(10, 0), tzinfo=timezone.utc),
-                )
-                _apply_entry_slippage(position, slippage)
-                open_positions.append(position)
-                trade_count += 1
+                candidate_pool.append(build_candidate(order, context=context, config=config, warnings=decision.warnings))
+        selected_underlyings = {position.underlying for position in open_positions}
+        max_open = int(config.get("account", {}).get("max_open_strategies", 8))
+        for candidate in rank_candidates(candidate_pool):
+            if len(open_positions) >= max_open:
+                break
+            if candidate.underlying in selected_underlyings:
+                continue
+            decision = pre_trade_check(
+                candidate.order,
+                account=account,
+                config=config,
+                open_positions=open_positions,
+                as_of=as_of,
+            )
+            if not decision.accepted:
+                for reason in decision.reasons:
+                    rejected_reasons[reason] = rejected_reasons.get(reason, 0) + 1
+                continue
+            position = position_from_order(
+                candidate.order,
+                opened_at=datetime.combine(as_of, time(10, 0), tzinfo=timezone.utc),
+            )
+            _apply_entry_slippage(position, slippage)
+            open_positions.append(position)
+            selected_underlyings.add(candidate.underlying)
+            trade_count += 1
         equity_curve.append(
             _portfolio_equity(
                 cash_balance=cash_balance,
