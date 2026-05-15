@@ -58,7 +58,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/state")
     async def api_state(_: str = Depends(require_auth)) -> dict[str, Any]:
-        return _build_state_snapshot()
+        return _safe_state_snapshot()
 
     @app.get("/api/health")
     async def api_health(_: str = Depends(require_auth)) -> dict[str, Any]:
@@ -95,11 +95,32 @@ def create_app() -> FastAPI:
 
     @app.get("/api/analytics")
     async def api_analytics(_: str = Depends(require_auth)) -> dict[str, Any]:
-        account = get_account_summary()
-        positions = read_positions_snapshot()
+        try:
+            account = get_account_summary()
+            positions = read_positions_snapshot()
+        except Exception:
+            log.exception("dashboard analytics inputs failed")
+            return {
+                "ok": False,
+                "error": "Dashboard analytics unavailable. Check server logs.",
+            }
         return _safe_dashboard_analytics(positions, account)
 
     return app
+
+
+def _safe_state_snapshot() -> dict[str, Any]:
+    try:
+        return _build_state_snapshot()
+    except Exception:
+        log.exception("dashboard state snapshot failed")
+        return {
+            "ok": False,
+            "version": __version__,
+            "mode": "unknown",
+            "server_time_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "error": "Dashboard state unavailable. Check server logs.",
+        }
 
 
 def _build_state_snapshot() -> dict[str, Any]:
