@@ -136,6 +136,110 @@ class PreTradeRiskTests(unittest.TestCase):
         )
         self.assertIn("liquidity_gate_failed", decision.reasons)
 
+    def test_rejects_stale_quote_timestamp(self):
+        cfg = {
+            **self.config,
+            "gates": {
+                **self.config["gates"],
+                "max_quote_age_seconds": 60,
+            },
+        }
+        order = _order()
+        for leg in order.legs:
+            leg.contract.meta["quote_timestamp"] = "2026-04-23T10:00:00+00:00"
+
+        decision = pre_trade_check(
+            order,
+            account=self.account,
+            config=cfg,
+            open_positions=[],
+            as_of=datetime(2026, 4, 23, 10, 2, tzinfo=timezone.utc),
+        )
+
+        self.assertIn("stale_quote", decision.reasons)
+
+    def test_rejects_missing_quote_timestamp_when_required(self):
+        cfg = {
+            **self.config,
+            "gates": {
+                **self.config["gates"],
+                "max_quote_age_seconds": 60,
+                "reject_missing_quote_timestamp": True,
+            },
+        }
+
+        decision = pre_trade_check(
+            _order(),
+            account=self.account,
+            config=cfg,
+            open_positions=[],
+            as_of=datetime(2026, 4, 23, 10, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertIn("missing_quote_timestamp", decision.reasons)
+
+    def test_accepts_recent_quote_timestamp_when_freshness_enabled(self):
+        cfg = {
+            **self.config,
+            "gates": {
+                **self.config["gates"],
+                "max_quote_age_seconds": 60,
+            },
+        }
+        order = _order()
+        for leg in order.legs:
+            leg.contract.meta["quote_timestamp"] = "2026-04-23T10:00:00+00:00"
+
+        decision = pre_trade_check(
+            order,
+            account=self.account,
+            config=cfg,
+            open_positions=[],
+            as_of=datetime(2026, 4, 23, 10, 0, 30, tzinfo=timezone.utc),
+        )
+
+        self.assertTrue(decision.accepted, decision.reasons)
+
+    def test_datetime_as_of_supports_quote_freshness_and_earnings_blackout(self):
+        cfg = {
+            **self.config,
+            "gates": {
+                **self.config["gates"],
+                "max_quote_age_seconds": 60,
+            },
+        }
+        order = _order()
+        order.next_earnings_date = date(2026, 4, 24)
+        for leg in order.legs:
+            leg.contract.meta["quote_timestamp"] = "2026-04-23T10:00:00+00:00"
+
+        decision = pre_trade_check(
+            order,
+            account=self.account,
+            config=cfg,
+            open_positions=[],
+            as_of=datetime(2026, 4, 23, 10, 0, 30, tzinfo=timezone.utc),
+        )
+
+        self.assertIn("earnings_blackout", decision.reasons)
+        self.assertNotIn("stale_quote", decision.reasons)
+
+    def test_rejects_wide_quote_with_specific_reason(self):
+        order = _order()
+        object.__setattr__(order.legs[0].contract, "bid", 1.0)
+        object.__setattr__(order.legs[0].contract, "ask", 1.5)
+
+        decision = pre_trade_check(
+            order,
+            account=self.account,
+            config=self.config,
+            open_positions=[],
+            as_of=date(2026, 4, 23),
+        )
+
+        self.assertIn("liquidity_gate_failed", decision.reasons)
+        self.assertIn("quote_spread_too_wide", decision.reasons)
+
     def test_rejects_portfolio_risk_cap(self):
         # Existing 1900 of risk leaves 100 of headroom; new order at
         # 200 should exceed.
@@ -250,6 +354,276 @@ class PreTradeRiskTests(unittest.TestCase):
             as_of=date(2026, 4, 23),
         )
         self.assertIn("conflicting_position_exists", decision.reasons)
+
+    def test_rejects_strategy_family_allocation_cap(self):
+        cfg = {
+            **self.config,
+            "portfolio_allocation": {"family_caps_pct": {"short_premium": 0.15}},
+        }
+        existing = PositionSnapshot(
+            strategy_id="existing",
+            strategy_name="iron_condor",
+            underlying="QQQ",
+            legs=[OrderLeg(contract=_contract("QQQ260619P00500000"), side="sell_to_open")],
+            opened_at=datetime.now(timezone.utc),
+            entry_credit=50.0,
+            max_loss=1400.0,
+            profit_take_pct=0.5,
+            loss_stop_multiple=1.5,
+            roll_threshold_delta=-0.4,
+        )
+
+        decision = pre_trade_check(
+            _order(max_loss=200.0),
+            account=self.account,
+            config=cfg,
+            open_positions=[existing],
+            as_of=date(2026, 4, 23),
+        )
+
+        self.assertIn("portfolio_allocation_short_premium_cap_exceeded", decision.reasons)
+
+    def test_rejects_single_underlying_allocation_cap(self):
+        cfg = {
+            **self.config,
+            "portfolio_allocation": {"max_single_underlying_allocation_pct": 0.10},
+        }
+        existing_contract = _contract("SPY260619P00450000")
+        object.__setattr__(existing_contract, "strike", 450.0)
+        existing = PositionSnapshot(
+            strategy_id="existing",
+            strategy_name="vertical_spread",
+            underlying="SPY",
+            legs=[OrderLeg(contract=existing_contract, side="sell_to_open")],
+            opened_at=datetime.now(timezone.utc),
+            entry_credit=50.0,
+            max_loss=900.0,
+            profit_take_pct=0.5,
+            loss_stop_multiple=1.5,
+            roll_threshold_delta=-0.4,
+        )
+
+        decision = pre_trade_check(
+            _order(max_loss=200.0),
+            account=self.account,
+            config=cfg,
+            open_positions=[existing],
+            as_of=date(2026, 4, 23),
+        )
+
+        self.assertIn("underlying_allocation_cap_exceeded", decision.reasons)
+
+    def test_ignores_invalid_allocation_caps(self):
+        cfg = {
+            **self.config,
+            "portfolio_allocation": {
+                "family_caps_pct": {"short_premium": "bad", "long_premium": -0.1},
+                "underlying_caps_pct": {"SPY": ""},
+            },
+        }
+
+        decision = pre_trade_check(
+            _order(max_loss=200.0),
+            account=self.account,
+            config=cfg,
+            open_positions=[],
+            as_of=date(2026, 4, 23),
+        )
+
+        self.assertTrue(decision.accepted)
+
+    def test_rejects_portfolio_delta_ceiling(self):
+        cfg = {**self.config, "portfolio_greek_limits": {"delta": 1.0}}
+
+        decision = pre_trade_check(
+            _order(max_loss=100.0),
+            account=self.account,
+            config=cfg,
+            open_positions=[],
+            as_of=date(2026, 4, 23),
+        )
+
+        self.assertIn("portfolio_delta_limit_exceeded", decision.reasons)
+
+    def test_rejects_projected_portfolio_vega_ceiling(self):
+        cfg = {**self.config, "portfolio_greek_limits": {"vega": 10.0}}
+        existing = PositionSnapshot(
+            strategy_id="existing",
+            strategy_name="vertical_spread",
+            underlying="QQQ",
+            legs=[OrderLeg(contract=_contract("QQQ260619P00500000"), side="sell_to_open")],
+            opened_at=datetime.now(timezone.utc),
+            entry_credit=50.0,
+            max_loss=100.0,
+            profit_take_pct=0.5,
+            loss_stop_multiple=1.5,
+            roll_threshold_delta=-0.4,
+        )
+
+        decision = pre_trade_check(
+            _order(max_loss=100.0),
+            account=self.account,
+            config=cfg,
+            open_positions=[existing],
+            as_of=date(2026, 4, 23),
+        )
+
+        self.assertIn("portfolio_vega_limit_exceeded", decision.reasons)
+
+    def test_ignores_invalid_portfolio_greek_limits(self):
+        cfg = {**self.config, "portfolio_greek_limits": {"delta": "bad", "theta": -1.0}}
+
+        decision = pre_trade_check(
+            _order(max_loss=100.0),
+            account=self.account,
+            config=cfg,
+            open_positions=[],
+            as_of=date(2026, 4, 23),
+        )
+
+        self.assertTrue(decision.accepted)
+
+    def test_rejects_sector_concentration_cap(self):
+        cfg = {
+            **self.config,
+            "_underlying_metadata": {
+                "SPY": {"sector": "technology"},
+                "QQQ": {"sector": "technology"},
+            },
+            "portfolio_concentration": {"max_sector_allocation_pct": 0.10},
+        }
+        existing = PositionSnapshot(
+            strategy_id="existing",
+            strategy_name="vertical_spread",
+            underlying="QQQ",
+            legs=[OrderLeg(contract=_contract("QQQ260619P00500000"), side="sell_to_open")],
+            opened_at=datetime.now(timezone.utc),
+            entry_credit=50.0,
+            max_loss=900.0,
+            profit_take_pct=0.5,
+            loss_stop_multiple=1.5,
+            roll_threshold_delta=-0.4,
+        )
+
+        decision = pre_trade_check(
+            _order(max_loss=200.0),
+            account=self.account,
+            config=cfg,
+            open_positions=[existing],
+            as_of=date(2026, 4, 23),
+        )
+
+        self.assertIn("sector_concentration_cap_exceeded", decision.reasons)
+
+    def test_rejects_correlation_group_concentration_cap(self):
+        cfg = {
+            **self.config,
+            "_underlying_metadata": {
+                "SPY": {"correlation_group": "Broad_Index"},
+                "IWM": {"correlation_group": "Broad_Index"},
+            },
+            "portfolio_concentration": {"correlation_group_caps_pct": {"broad_index": 0.10}},
+        }
+        existing = PositionSnapshot(
+            strategy_id="existing",
+            strategy_name="iron_condor",
+            underlying="IWM",
+            legs=[OrderLeg(contract=_contract("IWM260619P00500000"), side="sell_to_open")],
+            opened_at=datetime.now(timezone.utc),
+            entry_credit=50.0,
+            max_loss=900.0,
+            profit_take_pct=0.5,
+            loss_stop_multiple=1.5,
+            roll_threshold_delta=-0.4,
+        )
+
+        decision = pre_trade_check(
+            _order(max_loss=200.0),
+            account=self.account,
+            config=cfg,
+            open_positions=[existing],
+            as_of=date(2026, 4, 23),
+        )
+
+        self.assertIn("correlation_group_concentration_cap_exceeded", decision.reasons)
+
+    def test_concentration_caps_ignore_missing_metadata(self):
+        cfg = {
+            **self.config,
+            "portfolio_concentration": {
+                "max_sector_allocation_pct": 0.0,
+                "max_correlation_group_allocation_pct": 0.0,
+            },
+        }
+
+        decision = pre_trade_check(
+            _order(max_loss=100.0),
+            account=self.account,
+            config=cfg,
+            open_positions=[],
+            as_of=date(2026, 4, 23),
+        )
+
+        self.assertTrue(decision.accepted)
+
+    def test_rejects_drawdown_halt_new_entries(self):
+        cfg = {**self.config, "risk_throttle": {"max_drawdown_halt_pct": 0.10}}
+        account = {**self.account, "peak_equity": 12000.0, "equity": 10000.0}
+
+        decision = pre_trade_check(
+            _order(max_loss=100.0),
+            account=account,
+            config=cfg,
+            open_positions=[],
+            as_of=date(2026, 4, 23),
+        )
+
+        self.assertIn("drawdown_halt_new_entries", decision.reasons)
+
+    def test_rejects_daily_loss_halt_new_entries(self):
+        cfg = {**self.config, "risk_throttle": {"daily_loss_halt_pct": 0.03}}
+        account = {**self.account, "daily_loss_pct": 0.04}
+
+        decision = pre_trade_check(
+            _order(max_loss=100.0),
+            account=account,
+            config=cfg,
+            open_positions=[],
+            as_of=date(2026, 4, 23),
+        )
+
+        self.assertIn("daily_loss_halt_new_entries", decision.reasons)
+
+    def test_rejects_drawdown_reduced_risk_size(self):
+        cfg = {
+            **self.config,
+            "risk_throttle": {
+                "reduce_risk_drawdown_pct": 0.05,
+                "max_throttled_position_risk_pct": 0.01,
+            },
+        }
+        account = {**self.account, "drawdown_pct": 0.06}
+
+        decision = pre_trade_check(
+            _order(max_loss=200.0),
+            account=account,
+            config=cfg,
+            open_positions=[],
+            as_of=date(2026, 4, 23),
+        )
+
+        self.assertIn("drawdown_risk_throttle_exceeded", decision.reasons)
+
+    def test_risk_throttle_defaults_to_noop(self):
+        decision = pre_trade_check(
+            _order(max_loss=100.0),
+            account={**self.account, "drawdown_pct": 0.99, "daily_loss_pct": 0.99},
+            config=self.config,
+            open_positions=[],
+            as_of=date(2026, 4, 23),
+        )
+
+        self.assertTrue(decision.accepted)
 
 
 class CashSecuredPutPortfolioCashTests(unittest.TestCase):

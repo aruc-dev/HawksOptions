@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from core.config import load_config, load_underlyings
 from core.greeks_calculator import black_scholes_greeks
-from core.iv_rank_tracker import compute_iv_rank
+from core.iv_rank_tracker import compute_iv_percentile, compute_iv_rank
 from core.models import OptionContract
 from core.occ import format_occ_symbol
 
@@ -150,13 +150,16 @@ class AlpacaOptionsClient:
         as_of = as_of or date.today()
         meta = deepcopy(self._underlyings.get(symbol, {"symbol": symbol}))
         current_iv = _sample_iv(symbol, as_of)
-        iv_rank = compute_iv_rank(current_iv, [current_iv * 0.75, current_iv * 1.35])
+        trailing_ivs = [current_iv * 0.75, current_iv * 0.90, current_iv * 1.10, current_iv * 1.35]
+        iv_rank = compute_iv_rank(current_iv, trailing_ivs)
+        iv_percentile = compute_iv_percentile(current_iv, trailing_ivs)
         meta.update(
             {
                 "symbol": symbol,
                 "price": _sample_price(symbol, as_of),
                 "current_iv": current_iv,
                 "iv_rank": iv_rank,
+                "iv_percentile": iv_percentile,
                 "realized_vol_20d": float(meta.get("realized_vol_20d", max(0.1, current_iv * 0.8))),
                 "atr_pct": float(meta.get("atr_pct", 0.02)),
             }
@@ -210,6 +213,7 @@ class AlpacaOptionsClient:
                             vega=round(greeks.vega, 4),
                             gamma=round(greeks.gamma, 6),
                             underlying_price=spot,
+                            meta={"quote_timestamp": datetime.combine(as_of, datetime.min.time(), tzinfo=timezone.utc).replace(hour=16).isoformat()},
                         )
                     )
         return chain

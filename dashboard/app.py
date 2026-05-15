@@ -21,8 +21,10 @@ from dashboard.data_sources import (
     build_open_strategy_rows,
     build_portfolio_greeks,
     read_ai_activity,
+    read_dashboard_analytics,
     read_daily_baseline,
     read_latest_health_snapshot,
+    read_latest_rejection_summary,
     read_positions_snapshot,
     read_recent_log_issues,
     read_trades,
@@ -87,6 +89,16 @@ def create_app() -> FastAPI:
     async def api_strategies(_: str = Depends(require_auth)) -> dict[str, Any]:
         return {"strategies": strategy_summary(read_trades(), lookback_days=30)}
 
+    @app.get("/api/rejections/summary")
+    async def api_rejections(_: str = Depends(require_auth)) -> dict[str, Any]:
+        return read_latest_rejection_summary()
+
+    @app.get("/api/analytics")
+    async def api_analytics(_: str = Depends(require_auth)) -> dict[str, Any]:
+        account = get_account_summary()
+        positions = read_positions_snapshot()
+        return read_dashboard_analytics(positions, account)
+
     return app
 
 
@@ -117,6 +129,8 @@ def _build_state_snapshot() -> dict[str, Any]:
         "realized_30d": realized_pnl_window(rows, lookback_days=30),
         "daily_loss_headroom": daily_loss_headroom(read_daily_baseline(), account.get("portfolio_value", 0.0), cfg().daily_loss_limit_pct),
         "strategies": strategy_summary(rows, lookback_days=30),
+        "rejections": read_latest_rejection_summary(),
+        "analytics": read_dashboard_analytics(position_rows, account),
         "recent_trades": [row for row in rows if str(row.get("status", "")).lower() == "closed"][:10],
         "ai_activity": read_ai_activity(),
         "health": health,

@@ -15,6 +15,8 @@ class CalendarSpreadStrategy(BaseStrategy):
     def generate_order(self, context: StrategyContext) -> StrategyOrder | None:
         if not self.enabled() or not self.allowed_for_underlying(context):
             return None
+        if not self.event_risk_filter_passes(context):
+            return None
         calls = self.filtered_chain(context, "call")
         target = find_by_delta(
             calls,

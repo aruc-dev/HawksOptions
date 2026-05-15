@@ -20,10 +20,12 @@ from unittest.mock import patch
 
 from ai import openai_client
 from ai.openai_client import (
+    AI_REVIEW_RESULT_KEYS,
     _SpendTracker,
     _parse_response,
     critique_with_llm,
     reset_spend_tracker,
+    safe_review_result,
 )
 
 
@@ -136,6 +138,20 @@ class ParseResponseTests(unittest.TestCase):
         body = {"choices": [{"message": {"content": json.dumps([1, 2, 3])}}]}
         self.assertEqual(_parse_response(body)["severity"], "none")
 
+    def test_malicious_trade_instruction_keys_are_stripped(self):
+        result = safe_review_result(
+            {
+                "severity": "major",
+                "concerns": ["risk"],
+                "order": {"side": "buy"},
+                "quantity": 100,
+                "bypass_risk": True,
+            }
+        )
+        self.assertEqual(set(result), AI_REVIEW_RESULT_KEYS)
+        self.assertEqual(result["severity"], "major")
+        self.assertEqual(result["concerns"], ["risk"])
+
 
 class CritiqueWithLlmTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -225,9 +241,7 @@ class CritiqueWithLlmTests(unittest.TestCase):
         fake = _FakeResponse(body=_chat_payload(severity="minor", concerns=["x"]))
         with patch.object(openai_client.urllib.request, "urlopen", return_value=fake):
             result = critique_with_llm(_ORDER, api_key="k")
-        self.assertEqual(
-            set(result.keys()), {"severity", "concerns", "source", "reason"}
-        )
+        self.assertEqual(set(result.keys()), AI_REVIEW_RESULT_KEYS)
 
 
 if __name__ == "__main__":  # pragma: no cover

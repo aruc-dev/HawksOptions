@@ -15,6 +15,12 @@ class VerticalSpreadStrategy(BaseStrategy):
             return None
         if self.in_earnings_blackout(context):
             return None
+        if not self.event_risk_filter_passes(context):
+            return None
+        if not self.technical_regime_filter_passes(context):
+            return None
+        if not self.implied_realized_filter_passes(context):
+            return None
         variant = str(self.params.get("variant", "bull_put_credit"))
         if variant == "auto":
             trend = float(context.underlying.get("trend_20d", 0.0))
@@ -24,6 +30,8 @@ class VerticalSpreadStrategy(BaseStrategy):
         elif variant in {"bear_call_credit", "bearish"}:
             option_type = "call"
         else:
+            return None
+        if not self.volatility_surface_filter_passes(context, option_type=option_type):
             return None
         pair = select_vertical_spread(
             self.filtered_chain(context, option_type),

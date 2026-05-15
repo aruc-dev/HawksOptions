@@ -11,7 +11,7 @@ import unittest
 from datetime import date
 
 from core.models import OptionContract, OrderLeg, StrategyOrder
-from scheduler.run_scan import evaluate_external_ai
+from scheduler.run_scan import build_ai_disagreement_entry, build_pre_ai_feature_packet, evaluate_external_ai
 
 
 def _csp_order(*, iv_rank: float = 40.0, underlying: str = "AAPL") -> StrategyOrder:
@@ -224,11 +224,72 @@ class LlmCriticWiringTests(unittest.TestCase):
         self.assertEqual(result["veto_reason"], "")
         self.assertEqual(captured["headlines"], ["AAPL FDA investigation expands"])
 
+    def test_llm_receives_deterministic_pre_ai_feature_packet(self):
+        config = self._enabled_config()
+        order = _csp_order()
+        order.metadata["selection"] = {"selection_score": 1.23}
+        order.metadata["pre_ai_feature_packet"] = build_pre_ai_feature_packet(
+            order,
+            structural_severity="none",
+            structural_concerns=["none"],
+            risk_warnings=["watch spread"],
+        )
+        captured = {}
+
+        def fake_llm(packet, **_kw):
+            captured["packet"] = packet
+            return {"severity": "none", "concerns": []}
+
+        result = evaluate_external_ai(
+            order,
+            config=config,
+            structural_severity="none",
+            llm=fake_llm,
+            env={"OPENAI_API_KEY": "sk-test"},
+        )
+
+        self.assertEqual(result["veto_reason"], "")
+        self.assertEqual(captured["packet"]["schema_version"], 1)
+        self.assertEqual(captured["packet"]["order"]["underlying"], "AAPL")
+        self.assertEqual(captured["packet"]["deterministic_review"]["risk_warnings"], ["watch spread"])
+        self.assertEqual(captured["packet"]["order"]["exit_rules"]["profit_take_pct"], 0.5)
+        self.assertEqual(captured["packet"]["order"]["legs"][0]["open_interest"], 0)
+        self.assertEqual(captured["packet"]["order"]["legs"][0]["mid_price"], 1.2)
+        self.assertIn("selection", captured["packet"])
+
+    def test_ai_disagreement_entry_sanitizes_external_review(self):
+        order = _csp_order()
+        order.metadata["pre_ai_feature_packet"] = build_pre_ai_feature_packet(
+            order,
+            structural_severity="none",
+            risk_warnings=[],
+        )
+
+        entry = build_ai_disagreement_entry(
+            order,
+            stage="external_ai",
+            disagreement_type="ai_veto_after_deterministic_accept",
+            deterministic_decision="accept",
+            ai_decision="veto",
+            structural_severity="none",
+            reasons=["llm_critic:earnings risk"],
+            external={
+                "veto_reason": "llm_critic:earnings risk",
+                "news": {"veto": False, "reason": "", "matched_headlines": ["AAPL FDA probe"]},
+                "llm": {"severity": "major", "concerns": ["earnings risk"], "order": {"side": "buy"}},
+            },
+        )
+
+        self.assertEqual(entry["type"], "ai_veto_after_deterministic_accept")
+        self.assertEqual(entry["external_review"]["llm"]["severity"], "major")
+        self.assertNotIn("order", entry["external_review"]["llm"])
+        self.assertEqual(entry["external_review"]["news"]["matched_headlines"], ["AAPL FDA probe"])
+
     def test_llm_minor_does_not_veto(self):
         config = self._enabled_config()
 
         def fake_llm(*_a, **_kw):
-            return {"severity": "minor", "concerns": ["wide spread"]}
+            return {"severity": "minor", "concerns": ["wide spread"], "order": {"side": "buy"}}
 
         result = evaluate_external_ai(
             _csp_order(),
@@ -239,6 +300,7 @@ class LlmCriticWiringTests(unittest.TestCase):
         )
         self.assertEqual(result["veto_reason"], "")
         self.assertEqual(result["llm"]["severity"], "minor")
+        self.assertNotIn("order", result["llm"])
 
     def test_llm_none_does_not_veto(self):
         config = self._enabled_config()

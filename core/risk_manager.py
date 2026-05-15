@@ -9,8 +9,13 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from core.assignment_handler import calendar_front_assignment_risk, should_close_short_call_for_ex_div
+from core.concentration import concentration_limit_reasons
 from core.file_lock import atomic_write_text, lock_path_for, locked_open
 from core.models import OptionContract, PositionSnapshot, StrategyOrder
+from core.portfolio_allocation import allocation_limit_reasons
+from core.portfolio_greeks import aggregate_position_greeks, greek_limit_reasons
+from core.quote_freshness import quote_freshness_reasons
+from core.risk_throttle import risk_throttle_reasons
 from core.strategy_types import LONG_PREMIUM_STRATEGIES, SHORT_PREMIUM_STRATEGIES
 
 
@@ -46,7 +51,7 @@ def _buying_power(account: dict[str, Any]) -> float:
         return 0.0
 
 
-def _min_dte(order: StrategyOrder, as_of: date | None = None) -> int:
+def _min_dte(order: StrategyOrder, as_of: date | datetime | None = None) -> int:
     ref = as_of or date.today()
     return min((leg.contract.days_to_expiration(ref) for leg in order.legs), default=0)
 
@@ -59,10 +64,11 @@ def _passes_liquidity(contract: OptionContract, gates: dict[str, Any]) -> bool:
     return contract.spread_pct() <= float(gates.get("max_bid_ask_spread_pct", 0.10))
 
 
-def _days_until(target: date | None, as_of: date) -> int | None:
+def _days_until(target: date | None, as_of: date | datetime) -> int | None:
     if target is None:
         return None
-    return (target - as_of).days
+    ref = as_of.date() if isinstance(as_of, datetime) else as_of
+    return (target - ref).days
 
 
 def _position_dte(position: PositionSnapshot, as_of: date) -> int:
@@ -88,7 +94,7 @@ def pre_trade_check(
     account: dict[str, Any],
     config: dict[str, Any],
     open_positions: Iterable[PositionSnapshot],
-    as_of: date | None = None,
+    as_of: date | datetime | None = None,
     ai_result: dict[str, Any] | None = None,
 ) -> PreTradeDecision:
     as_of = as_of or date.today()
@@ -129,6 +135,7 @@ def pre_trade_check(
         if not _passes_liquidity(leg.contract, gates):
             reasons.append("liquidity_gate_failed")
             break
+    reasons.extend(quote_freshness_reasons(order, gates=gates, as_of=as_of))
 
     min_dte = _min_dte(order, as_of=as_of)
     if min_dte < int(gates.get("min_dte_entry", 7)) or min_dte > int(gates.get("max_dte_entry", 55)):
@@ -146,6 +153,32 @@ def pre_trade_check(
     if _conflicts_with_open_position(order, open_positions):
         reasons.append("conflicting_position_exists")
 
+    reasons.extend(
+        allocation_limit_reasons(
+            order,
+            open_positions=open_positions,
+            account=account,
+            config=config,
+        )
+    )
+    reasons.extend(
+        greek_limit_reasons(
+            order,
+            open_positions=open_positions,
+            account=account,
+            config=config,
+        )
+    )
+    reasons.extend(
+        concentration_limit_reasons(
+            order,
+            open_positions=open_positions,
+            account=account,
+            config=config,
+        )
+    )
+    reasons.extend(risk_throttle_reasons(order, account=account, config=config))
+
     if order.ai_veto_reason:
         reasons.append("ai_veto")
     elif ai_result and ai_result.get("veto"):
@@ -157,15 +190,7 @@ def pre_trade_check(
 
 
 def aggregate_portfolio_greeks(positions: Iterable[PositionSnapshot]) -> dict[str, float]:
-    totals = {"delta": 0.0, "theta": 0.0, "vega": 0.0, "gamma": 0.0}
-    for position in positions:
-        for leg in position.legs:
-            sign = -1.0 if leg.side == "sell_to_open" else 1.0
-            qty_scale = 100.0 * leg.qty
-            totals["delta"] += sign * qty_scale * float(leg.contract.delta or 0.0)
-            totals["theta"] += sign * qty_scale * float(leg.contract.theta or 0.0)
-            totals["vega"] += sign * qty_scale * float(leg.contract.vega or 0.0)
-            totals["gamma"] += sign * qty_scale * float(leg.contract.gamma or 0.0)
+    totals = aggregate_position_greeks(positions)
     return {key: round(value, 4) for key, value in totals.items()}
 
 

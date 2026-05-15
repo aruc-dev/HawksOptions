@@ -41,6 +41,12 @@ TRADE_LOG_FIELDS = [
     "iv_at_entry",
     "iv_rank_at_entry",
     "underlying_price_at_entry",
+    "expected_entry_price",
+    "actual_entry_price",
+    "leg_slippage_dollars",
+    "order_duration_seconds",
+    "partial_fill",
+    "retry_count",
 ]
 
 

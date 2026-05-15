@@ -9,6 +9,7 @@ SHORT_PREMIUM_STRATEGIES = {
     "vertical_spread",
     "iron_condor",
     "earnings_iron_condor",
+    "broken_wing_butterfly",
 }
 
-LONG_PREMIUM_STRATEGIES = {"calendar_spread"}
+LONG_PREMIUM_STRATEGIES = {"calendar_spread", "diagonal_spread"}
