@@ -38,6 +38,16 @@ class DataSourceTests(unittest.TestCase):
             out = data_sources.read_latest_health_snapshot(Path(tmp))
         self.assertFalse(out["ok"])
 
+    def test_recent_log_issues_do_not_expose_raw_log_lines(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            logs = Path(tmp)
+            (logs / "risk.log").write_text("ERROR traceback detail with secret\n", encoding="utf-8")
+
+            out = data_sources.read_recent_log_issues(logs)
+
+        self.assertEqual(out[0]["level"], "ERROR")
+        self.assertNotIn("traceback detail", out[0]["line"])
+
     def test_health_snapshot_dir_uses_configured_reports_dir(self):
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "config.yaml"

@@ -99,10 +99,10 @@ def create_app() -> FastAPI:
             account = get_account_summary()
             positions = read_positions_snapshot()
         except Exception:
-            log.exception("dashboard analytics inputs failed")
+            log.warning("dashboard analytics inputs failed")
             return {
                 "ok": False,
-                "error": "Dashboard analytics unavailable. Check server logs.",
+                "error": "Dashboard analytics unavailable.",
             }
         return _safe_dashboard_analytics(positions, account)
 
@@ -113,13 +113,13 @@ def _safe_state_snapshot() -> dict[str, Any]:
     try:
         return _build_state_snapshot()
     except Exception:
-        log.exception("dashboard state snapshot failed")
+        log.warning("dashboard state snapshot failed")
         return {
             "ok": False,
             "version": __version__,
             "mode": "unknown",
             "server_time_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "error": "Dashboard state unavailable. Check server logs.",
+            "error": "Dashboard state unavailable.",
         }
 
 
@@ -163,10 +163,10 @@ def _safe_dashboard_analytics(position_rows: list[dict[str, Any]], account: dict
     try:
         return read_dashboard_analytics(position_rows, account)
     except Exception:
-        log.exception("dashboard analytics build failed")
+        log.warning("dashboard analytics build failed")
         return {
             "ok": False,
-            "error": "Dashboard analytics unavailable. Check server logs.",
+            "error": "Dashboard analytics unavailable.",
         }
 
 

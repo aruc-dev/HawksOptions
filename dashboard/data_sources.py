@@ -64,7 +64,11 @@ def read_recent_log_issues(logs_dir: Path | None = None, max_lines_per_file: int
             match = LOG_ISSUE_RE.search(line)
             if not match:
                 continue
-            issues.append({"file": path.name, "level": "WARNING" if match.group(1) == "WARN" else match.group(1), "line": line})
+            issues.append({
+                "file": path.name,
+                "level": "WARNING" if match.group(1) == "WARN" else match.group(1),
+                "line": "Log issue detected; inspect server logs locally.",
+            })
             if len(issues) >= 20:
                 return issues
     return issues
@@ -105,8 +109,8 @@ def read_latest_candidate_scan(reports_dir: Path | None = None) -> dict[str, Any
     try:
         with open(path, "r", encoding="utf-8") as handle:
             payload = json.load(handle)
-    except Exception as exc:
-        log.warning("could not read candidate scan %s: %s", path, exc)
+    except Exception:
+        log.warning("could not read candidate scan %s", path)
         return {"ok": False, "path": str(path), "data": None, "error": "Could not read latest candidate scan"}
     return {"ok": True, "path": str(path), "data": payload}
 
@@ -118,8 +122,8 @@ def read_latest_rejection_summary(reports_dir: Path | None = None) -> dict[str, 
     try:
         with open(path, "r", encoding="utf-8") as handle:
             payload = json.load(handle)
-    except Exception as exc:
-        log.warning("could not read rejection summary %s: %s", path, exc)
+    except Exception:
+        log.warning("could not read rejection summary %s", path)
         return {
             "ok": False,
             "path": str(path),
@@ -172,8 +176,8 @@ def read_json_fenced_report(pattern: str, reports_dir: Path | None = None) -> di
         return {"ok": False, "path": str(path), "data": None, "error": "JSON fence not closed"}
     try:
         payload = json.loads(text[start:end].strip())
-    except json.JSONDecodeError as exc:
-        log.warning("could not parse JSON report %s: %s", path, exc)
+    except json.JSONDecodeError:
+        log.warning("could not parse JSON report %s", path)
         return {"ok": False, "path": str(path), "data": None, "error": "Could not parse latest report"}
     return {"ok": True, "path": str(path), "data": payload}
 
@@ -193,8 +197,8 @@ def read_latest_research_trace(reports_dir: Path | None = None) -> dict[str, Any
     try:
         with open(path, "r", encoding="utf-8") as handle:
             payload = json.load(handle)
-    except Exception as exc:
-        log.warning("could not read research trace %s: %s", path, exc)
+    except Exception:
+        log.warning("could not read research trace %s", path)
         return {"ok": False, "path": str(path), "data": None, "error": "Could not read latest research trace"}
     return {"ok": True, "path": str(path), "data": payload}
 
@@ -206,8 +210,8 @@ def read_latest_ai_disagreements(reports_dir: Path | None = None) -> dict[str, A
     try:
         with open(path, "r", encoding="utf-8") as handle:
             payload = json.load(handle)
-    except Exception as exc:
-        log.warning("could not read AI disagreement log %s: %s", path, exc)
+    except Exception:
+        log.warning("could not read AI disagreement log %s", path)
         return {"ok": False, "path": str(path), "data": None, "error": "Could not read latest AI disagreement log"}
     return {"ok": True, "path": str(path), "data": payload}
 
