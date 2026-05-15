@@ -79,6 +79,7 @@ class DataSourceTests(unittest.TestCase):
         self.assertFalse(out["ok"])
         self.assertEqual(out["summary"]["total_rejected"], 0)
         self.assertIn("error", out)
+        self.assertNotIn("Expecting", out["error"])
 
     def test_read_dashboard_analytics_uses_latest_reports(self):
         with tempfile.TemporaryDirectory() as tmp:
