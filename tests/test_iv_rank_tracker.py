@@ -5,12 +5,16 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from core.iv_rank_tracker import append_iv_snapshot, compute_iv_rank, load_iv_history
+from core.iv_rank_tracker import append_iv_snapshot, compute_iv_percentile, compute_iv_rank, load_iv_history
 
 
 class IVRankTrackerTests(unittest.TestCase):
     def test_compute_iv_rank(self):
         self.assertEqual(compute_iv_rank(0.30, [0.20, 0.40]), 50.0)
+
+    def test_compute_iv_percentile(self):
+        self.assertEqual(compute_iv_percentile(0.30, [0.20, 0.25, 0.35, 0.40]), 50.0)
+        self.assertEqual(compute_iv_percentile(0.50, [0.20, 0.25, 0.35, 0.40]), 100.0)
 
     def test_append_and_load_history(self):
         with tempfile.TemporaryDirectory() as tmp:

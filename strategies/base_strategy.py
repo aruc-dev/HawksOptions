@@ -7,8 +7,11 @@ from datetime import date
 from typing import Any
 
 from core.config import strategy_config
+from core.event_risk import event_risk_passes
 from core.models import OrderLeg, StrategyContext, StrategyOrder
 from core.options_chain import filter_contracts
+from core.technical_regime import technical_regime_context, technical_regime_passes
+from core.volatility_surface import volatility_surface_metrics
 
 
 def _as_date(value: Any) -> date | None:
@@ -100,6 +103,90 @@ class BaseStrategy(ABC):
         if min_reward_to_risk > 0 and (max_loss <= 0 or credit / max_loss < min_reward_to_risk):
             return False
         return True
+
+    def modeled_entry_cost(self, legs: list[OrderLeg]) -> float:
+        """Estimate configured entry friction without importing backtest code."""
+        slippage = self.config.get("backtest", {}).get("slippage", {})
+        if not isinstance(slippage, dict):
+            slippage = {}
+        per_leg_cents = float(slippage.get("per_leg_cents", 0.0))
+        spread_pct = float(slippage.get("spread_pct", 0.0))
+        commission = float(slippage.get("commission_per_contract", 0.0))
+        cost = 0.0
+        for leg in legs:
+            qty = max(1, int(leg.qty))
+            spread = max(0.0, float(leg.contract.ask) - float(leg.contract.bid))
+            cost += ((per_leg_cents + (spread_pct * spread / 2.0)) * 100.0 * qty) + (commission * qty)
+        return round(cost, 4)
+
+    def cost_adjusted_credit_passes(self, *, credit: float, legs: list[OrderLeg]) -> bool:
+        min_credit_to_roundtrip_cost = float(self.params.get("min_credit_to_roundtrip_cost", 0.0))
+        if min_credit_to_roundtrip_cost <= 0:
+            return True
+        roundtrip_cost = self.modeled_entry_cost(legs) * 2.0
+        if roundtrip_cost <= 0:
+            return True
+        return credit >= roundtrip_cost * min_credit_to_roundtrip_cost
+
+    def implied_realized_spread(self, context: StrategyContext) -> float:
+        return round(float(context.current_iv or 0.0) - float(context.realized_vol_20d or 0.0), 6)
+
+    def implied_realized_filter_passes(self, context: StrategyContext) -> bool:
+        current_iv = float(context.current_iv or context.underlying.get("current_iv", context.iv_rank / 100.0))
+        realized_vol = float(context.realized_vol_20d or 0.0)
+        if current_iv <= 0 or realized_vol <= 0:
+            return True
+        min_spread = float(self.params.get("min_iv_realized_spread", 0.0))
+        min_ratio = float(self.params.get("min_iv_over_realized_vol", 0.0))
+        if min_spread > 0 and (current_iv - realized_vol) < min_spread:
+            return False
+        if min_ratio > 0 and current_iv < realized_vol * min_ratio:
+            return False
+        return True
+
+    def surface_metrics(self, context: StrategyContext) -> dict[str, float | None]:
+        return volatility_surface_metrics(
+            context.chain,
+            underlying_price=context.underlying_price,
+            as_of=context.as_of,
+            front_dte=int(self.params.get("surface_front_dte", self.params.get("target_dte", 30))),
+            back_dte=int(self.params.get("surface_back_dte", 45)),
+        )
+
+    def volatility_surface_filter_passes(self, context: StrategyContext, *, option_type: str | None = None) -> bool:
+        metrics = self.surface_metrics(context)
+        if option_type in {"put", "call"}:
+            skew = metrics.get(f"{option_type}_tail_skew")
+            min_skew = float(self.params.get(f"min_{option_type}_tail_skew", self.params.get("min_tail_skew", 0.0)))
+            if min_skew > 0 and skew is not None and skew < min_skew:
+                return False
+        slope = metrics.get("term_structure_slope")
+        min_slope = self.params.get("min_term_structure_slope")
+        max_slope = self.params.get("max_term_structure_slope")
+        if min_slope is not None and slope is not None and slope < float(min_slope):
+            return False
+        if max_slope is not None and slope is not None and slope > float(max_slope):
+            return False
+        return True
+
+    def technical_regime_metrics(self, context: StrategyContext) -> dict[str, float | None]:
+        metrics = technical_regime_context(context.underlying)
+        overrides = {
+            "trend_20d": context.trend_20d,
+            "trend_50d": context.trend_50d,
+            "rsi_14": context.rsi_14,
+            "price_vs_sma_50": context.price_vs_sma_50,
+        }
+        for key, value in overrides.items():
+            if value is not None:
+                metrics[key] = float(value)
+        return metrics
+
+    def technical_regime_filter_passes(self, context: StrategyContext) -> bool:
+        return technical_regime_passes(self.technical_regime_metrics(context), self.params)
+
+    def event_risk_filter_passes(self, context: StrategyContext) -> bool:
+        return event_risk_passes(context.underlying, self.params)
 
     def strategy_id(self, context: StrategyContext) -> str:
         return f"{self.name}-{context.underlying['symbol']}-{context.as_of:%Y%m%d}"

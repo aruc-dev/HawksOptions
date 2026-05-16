@@ -15,12 +15,18 @@ class IronCondorStrategy(BaseStrategy):
             return None
         if self.in_earnings_blackout(context):
             return None
+        if not self.event_risk_filter_passes(context):
+            return None
         min_iv_rank = float(self.params.get("min_iv_rank", 0.0))
         if min_iv_rank > 0 and context.iv_rank < min_iv_rank:
             return None
-        current_iv = context.current_iv or float(context.underlying.get("current_iv", context.iv_rank / 100.0))
-        min_iv_over_realized = float(self.params.get("min_iv_over_realized_vol", 1.0))
-        if current_iv < max(0.01, context.realized_vol_20d * min_iv_over_realized):
+        if not self.technical_regime_filter_passes(context):
+            return None
+        if not self.implied_realized_filter_passes(context):
+            return None
+        if not self.volatility_surface_filter_passes(context, option_type="put"):
+            return None
+        if not self.volatility_surface_filter_passes(context, option_type="call"):
             return None
         if context.atr_pct > float(self.params.get("max_atr_pct", 0.03)):
             return None
@@ -47,6 +53,14 @@ class IronCondorStrategy(BaseStrategy):
             return None
         if not self.credit_quality_passes(credit=credit, width=max(put_width, call_width)):
             return None
+        legs = [
+            OrderLeg(contract=short_put, side="sell_to_open", qty=1),
+            OrderLeg(contract=long_put, side="buy_to_open", qty=1),
+            OrderLeg(contract=short_call, side="sell_to_open", qty=1),
+            OrderLeg(contract=long_call, side="buy_to_open", qty=1),
+        ]
+        if not self.cost_adjusted_credit_passes(credit=credit, legs=legs):
+            return None
         qty = self.order_quantity(context)
         if qty <= 0:
             return None
@@ -54,12 +68,7 @@ class IronCondorStrategy(BaseStrategy):
             strategy_name=self.name,
             strategy_id=self.strategy_id(context),
             underlying=context.underlying["symbol"],
-            legs=[
-                OrderLeg(contract=short_put, side="sell_to_open", qty=1),
-                OrderLeg(contract=long_put, side="buy_to_open", qty=1),
-                OrderLeg(contract=short_call, side="sell_to_open", qty=1),
-                OrderLeg(contract=long_call, side="buy_to_open", qty=1),
-            ],
+            legs=legs,
             max_loss=max_loss,
             max_profit=credit,
             required_buying_power=max_loss,

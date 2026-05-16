@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from core.alpaca_options_client import AlpacaOptionsClient
+from core.broker_adapter import TradingClient
 from core.config import BASE_DIR, ensure_runtime_dirs, load_config, load_underlyings, reporting_path
 from core.models import OrderLeg, PositionSnapshot, StrategyContext
 from core.order_executor import load_positions
@@ -24,7 +25,7 @@ def runtime_paths(config: dict[str, Any]) -> dict[str, Path]:
     }
 
 
-def load_runtime(config: dict[str, Any] | None = None) -> tuple[dict[str, Any], AlpacaOptionsClient, dict[str, Path]]:
+def load_runtime(config: dict[str, Any] | None = None) -> tuple[dict[str, Any], TradingClient, dict[str, Path]]:
     config = config or load_config()
     ensure_runtime_dirs(config)
     client = AlpacaOptionsClient(config)
@@ -67,7 +68,7 @@ def _short_call_extrinsic(legs) -> float:
 def refresh_positions(
     positions: list[PositionSnapshot],
     *,
-    client: AlpacaOptionsClient,
+    client: TradingClient,
     as_of: date | None = None,
 ) -> list[PositionSnapshot]:
     as_of = as_of or date.today()
@@ -102,7 +103,7 @@ def refresh_positions(
 def build_context(
     *,
     config: dict[str, Any],
-    client: AlpacaOptionsClient,
+    client: TradingClient,
     underlying: dict[str, Any],
     account: dict[str, Any],
     open_positions: list[PositionSnapshot],
@@ -120,18 +121,23 @@ def build_context(
         as_of=as_of,
         underlying_price=float(snapshot["price"]),
         current_iv=float(snapshot.get("current_iv", 0.0)),
+        iv_percentile=float(snapshot.get("iv_percentile", snapshot.get("iv_rank", 0.0))),
         next_earnings_date=underlying.get("next_earnings_date"),
         ex_dividend_date=underlying.get("ex_dividend_date"),
         dividend_amount=float(underlying.get("dividend_amount", 0.0)),
         realized_vol_20d=float(snapshot.get("realized_vol_20d", 0.0)),
         atr_pct=float(snapshot.get("atr_pct", 0.0)),
+        trend_20d=snapshot.get("trend_20d", underlying.get("trend_20d")),
+        trend_50d=snapshot.get("trend_50d", underlying.get("trend_50d")),
+        rsi_14=snapshot.get("rsi_14", underlying.get("rsi_14")),
+        price_vs_sma_50=snapshot.get("price_vs_sma_50", underlying.get("price_vs_sma_50")),
         long_shares=long_shares,
         cost_basis=cost_basis,
         open_positions=tuple(open_positions),
     )
 
 
-def stock_inventory(client: AlpacaOptionsClient, symbol: str) -> tuple[int, float]:
+def stock_inventory(client: TradingClient, symbol: str) -> tuple[int, float]:
     """Return long stock shares and average cost for covered-call context."""
     try:
         positions = client.get_positions()

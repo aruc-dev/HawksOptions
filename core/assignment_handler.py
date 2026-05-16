@@ -48,19 +48,19 @@ def calendar_front_assignment_risk(
     *,
     slippage: float = 0.05,
 ) -> bool:
-    """Return True when the calendar's front short leg looks vulnerable
+    """Return True when a calendar/diagonal front short leg looks vulnerable
     to early assignment.
 
-    A calendar spread is only defined-risk if held through front
-    expiration. If the ITM short front leg's mid trades at or below
-    its intrinsic value (within a small slippage band), holders of the
-    long side have an incentive to exercise, leaving us long the naked
-    back leg. We treat that condition as a flag-for-close signal.
+    Calendar and debit diagonal spreads are only defined-risk if held
+    through front expiration. If the ITM short front leg's mid trades at
+    or below its intrinsic value (within a small slippage band), holders
+    of the long side have an incentive to exercise. We treat that
+    condition as a flag-for-close signal.
 
     The slippage band defaults to $0.05 per share (= $5 per contract);
     callers can pass a config-driven value.
     """
-    if position.strategy_name != "calendar_spread":
+    if position.strategy_name not in {"calendar_spread", "diagonal_spread"}:
         return False
     short_legs = [leg for leg in position.legs if leg.side == "sell_to_open"]
     long_legs = [leg for leg in position.legs if leg.side == "buy_to_open"]

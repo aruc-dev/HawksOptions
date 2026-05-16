@@ -15,6 +15,10 @@ class CashSecuredPutStrategy(BaseStrategy):
             return None
         if self.in_earnings_blackout(context):
             return None
+        if not self.event_risk_filter_passes(context):
+            return None
+        if not self.technical_regime_filter_passes(context):
+            return None
         puts = self.filtered_chain(context, "put")
         contract = find_by_delta(
             puts,

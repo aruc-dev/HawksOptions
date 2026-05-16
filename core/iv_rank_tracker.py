@@ -23,6 +23,14 @@ def compute_iv_rank(current_iv: float, trailing_ivs: Iterable[float]) -> float:
     return round(max(0.0, min(raw, 100.0)), 2)
 
 
+def compute_iv_percentile(current_iv: float, trailing_ivs: Iterable[float]) -> float:
+    values = [float(value) for value in trailing_ivs]
+    if not values:
+        return 0.0
+    below_or_equal = sum(1 for value in values if value <= float(current_iv))
+    return round(max(0.0, min(100.0 * below_or_equal / len(values), 100.0)), 2)
+
+
 def append_iv_snapshot(
     path: Path,
     symbol: str,

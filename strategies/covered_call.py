@@ -15,6 +15,10 @@ class CoveredCallStrategy(BaseStrategy):
             return None
         if self.in_earnings_blackout(context):
             return None
+        if not self.event_risk_filter_passes(context):
+            return None
+        if not self.technical_regime_filter_passes(context):
+            return None
         if context.long_shares < 100:
             return None
         eligible_calls = [

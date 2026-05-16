@@ -21,8 +21,10 @@ from dashboard.data_sources import (
     build_open_strategy_rows,
     build_portfolio_greeks,
     read_ai_activity,
+    read_dashboard_analytics,
     read_daily_baseline,
     read_latest_health_snapshot,
+    read_latest_rejection_summary,
     read_positions_snapshot,
     read_recent_log_issues,
     read_trades,
@@ -56,7 +58,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/state")
     async def api_state(_: str = Depends(require_auth)) -> dict[str, Any]:
-        return _build_state_snapshot()
+        return _safe_state_snapshot()
 
     @app.get("/api/health")
     async def api_health(_: str = Depends(require_auth)) -> dict[str, Any]:
@@ -87,7 +89,38 @@ def create_app() -> FastAPI:
     async def api_strategies(_: str = Depends(require_auth)) -> dict[str, Any]:
         return {"strategies": strategy_summary(read_trades(), lookback_days=30)}
 
+    @app.get("/api/rejections/summary")
+    async def api_rejections(_: str = Depends(require_auth)) -> dict[str, Any]:
+        return read_latest_rejection_summary()
+
+    @app.get("/api/analytics")
+    async def api_analytics(_: str = Depends(require_auth)) -> dict[str, Any]:
+        try:
+            account = get_account_summary()
+            positions = read_positions_snapshot()
+        except Exception:
+            log.warning("dashboard analytics inputs failed")
+            return {
+                "ok": False,
+                "error": "Dashboard analytics unavailable.",
+            }
+        return _safe_dashboard_analytics(positions, account)
+
     return app
+
+
+def _safe_state_snapshot() -> dict[str, Any]:
+    try:
+        return _build_state_snapshot()
+    except Exception:
+        log.warning("dashboard state snapshot failed")
+        return {
+            "ok": False,
+            "version": __version__,
+            "mode": "unknown",
+            "server_time_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "error": "Dashboard state unavailable.",
+        }
 
 
 def _build_state_snapshot() -> dict[str, Any]:
@@ -117,11 +150,24 @@ def _build_state_snapshot() -> dict[str, Any]:
         "realized_30d": realized_pnl_window(rows, lookback_days=30),
         "daily_loss_headroom": daily_loss_headroom(read_daily_baseline(), account.get("portfolio_value", 0.0), cfg().daily_loss_limit_pct),
         "strategies": strategy_summary(rows, lookback_days=30),
+        "rejections": read_latest_rejection_summary(),
+        "analytics": _safe_dashboard_analytics(position_rows, account),
         "recent_trades": [row for row in rows if str(row.get("status", "")).lower() == "closed"][:10],
         "ai_activity": read_ai_activity(),
         "health": health,
         "alpaca_reachable": reachable,
     }
+
+
+def _safe_dashboard_analytics(position_rows: list[dict[str, Any]], account: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return read_dashboard_analytics(position_rows, account)
+    except Exception:
+        log.warning("dashboard analytics build failed")
+        return {
+            "ok": False,
+            "error": "Dashboard analytics unavailable.",
+        }
 
 
 def _build_health() -> dict[str, Any]:

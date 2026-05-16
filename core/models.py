@@ -269,11 +269,16 @@ class StrategyContext:
     as_of: date
     underlying_price: float
     current_iv: float = 0.0
+    iv_percentile: float = 0.0
     next_earnings_date: date | None = None
     ex_dividend_date: date | None = None
     dividend_amount: float = 0.0
     realized_vol_20d: float = 0.0
     atr_pct: float = 0.0
+    trend_20d: float | None = None
+    trend_50d: float | None = None
+    rsi_14: float | None = None
+    price_vs_sma_50: float | None = None
     long_shares: int = 0
     cost_basis: float = 0.0
     open_positions: tuple[PositionSnapshot, ...] = ()

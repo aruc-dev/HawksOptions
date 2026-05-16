@@ -92,6 +92,8 @@ strategies:
     roll_threshold_delta: -0.40
     min_credit_to_width: 0.05
     min_net_credit: 5.0
+    min_iv_realized_spread: 0.0
+    min_tail_skew: 0.0
     weight: 1.0
 
   iron_condor:
@@ -110,11 +112,74 @@ strategies:
     warning_delta_abs: 0.40
     min_iv_rank: 30
     min_iv_over_realized_vol: 1.0
+    min_iv_realized_spread: 0.0
+    min_tail_skew: 0.0
     max_atr_pct: 0.03
     min_credit_to_width: 0.05
     min_net_credit: 5.0
+    # Require gross credit to clear modeled entry + exit costs. The sample
+    # replay showed low-credit condors were dominated by friction.
+    min_credit_to_roundtrip_cost: 1.25
     skip_if_earnings_within_dte: true
     weight: 1.0
+
+  broken_wing_butterfly:
+    enabled: false
+    required_options_level: 3
+    swing_only: true
+    option_type: put
+    body_delta: -0.25
+    target_dte: 35
+    target_dte_min: 25
+    target_dte_max: 45
+    min_wing_width: 1.0
+    broken_wing_ratio: 2.0
+    profit_take_pct: 0.35
+    loss_stop_multiple: 1.5
+    roll_threshold_delta: 0.45
+    min_credit_to_width: 0.02
+    min_net_credit: 1.0
+    min_iv_realized_spread: 0.0
+    min_tail_skew: 0.0
+    contracts: 1
+    weight: 0.4
+
+  butterfly:
+    enabled: false
+    required_options_level: 3
+    swing_only: true
+    variant: long_debit
+    option_type: put
+    body_delta: -0.25
+    target_dte: 35
+    target_dte_min: 25
+    target_dte_max: 45
+    min_wing_width: 1.0
+    max_wing_width_mismatch: 0.0
+    profit_take_pct: 0.50
+    loss_stop_multiple: 1.0
+    roll_threshold_delta: 0.45
+    min_credit_to_width: 0.02
+    min_net_credit: 1.0
+    min_iv_realized_spread: 0.0
+    min_tail_skew: 0.0
+    contracts: 1
+    weight: 0.3
+
+  collar:
+    enabled: false
+    required_options_level: 1
+    swing_only: true
+    put_delta: -0.20
+    call_delta: 0.20
+    target_dte: 35
+    target_dte_min: 25
+    target_dte_max: 45
+    profit_take_pct: 0.50
+    loss_stop_multiple: 1.0
+    roll_threshold_delta: 0.45
+    contracts: 1
+    weight: 0.4
 
   calendar_spread:
     enabled: false
@@ -125,6 +190,41 @@ strategies:
     back_dte: 45
     contracts: 1
     weight: 0.5
+
+  diagonal_spread:
+    enabled: false
+    required_options_level: 3
+    swing_only: true
+    variant: call_debit
+    front_delta: 0.30
+    back_delta: 0.45
+    front_dte: 21
+    back_dte: 45
+    target_dte_min: 14
+    target_dte_max: 75
+    profit_take_pct: 0.30
+    loss_stop_multiple: 1.0
+    profit_multiple_estimate: 1.5
+    contracts: 1
+    weight: 0.4
+
+  tail_risk_hedge:
+    enabled: false
+    required_options_level: 1
+    swing_only: true
+    target_delta: -0.10
+    target_dte: 45
+    target_dte_min: 30
+    target_dte_max: 55
+    min_drawdown_pct: 0.05
+    min_daily_loss_pct: 0.03
+    min_atr_pct: 0.025
+    min_iv_over_realized_vol: 1.25
+    premium_budget_pct: 0.01
+    profit_take_pct: 1.0
+    loss_stop_multiple: 1.0
+    contracts: 1
+    weight: 0.2
 
   earnings_iron_condor:
     enabled: false
@@ -158,6 +258,43 @@ ai:
   trade_idea_critic:
     enabled: true
     veto_on: major_concern
+
+research:
+  earnings_calendar_spread:
+    enabled: false
+    min_days_to_earnings: 1
+    max_days_to_earnings: 10
+    min_earnings_confidence: 0.8
+    min_iv_rank: 50
+    min_front_back_iv_spread: 0.03
+    option_types:
+      - call
+      - put
+    front_min_dte: 7
+    front_max_dte: 21
+    back_target_dte: 45
+    back_max_dte: 55
+    max_debit: 250.0
+    max_assignment_intrinsic_slippage: 0.05
+    exit_days_after_earnings: 1
+    max_candidates_per_underlying: 5
+  volatility_crush_earnings_iron_condor:
+    enabled: false
+    min_days_to_earnings: 0
+    max_days_to_earnings: 3
+    min_iv_rank: 70
+    dte_min: 7
+    dte_max: 21
+    target_dte: 14
+    put_short_delta: -0.16
+    put_long_delta: -0.08
+    call_short_delta: 0.16
+    call_long_delta: 0.08
+    require_short_strikes_outside_expected_move: true
+    min_credit: 50.0
+    max_loss: 500.0
+    max_event_risk_pct: 0.01
+    exit_days_after_earnings: 1
 
 schedule:
   scan_interval_min: 30

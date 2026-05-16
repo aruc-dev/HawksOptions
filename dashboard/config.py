@@ -37,6 +37,11 @@ class DashboardConfig:
         return float(self._load().get("account", {}).get("daily_loss_halt_pct", 0.05))
 
     @property
+    def account_config(self) -> dict[str, Any]:
+        section = self._load().get("account", {})
+        return section if isinstance(section, dict) else {}
+
+    @property
     def trade_log_path(self) -> Path:
         return BASE_DIR / str(self._load().get("reporting", {}).get("trade_log_file", "data/trades.csv"))
 
@@ -57,8 +62,12 @@ class DashboardConfig:
         return BASE_DIR / str(self._load().get("reporting", {}).get("logs_dir", "logs"))
 
     @property
+    def reports_dir(self) -> Path:
+        return BASE_DIR / str(self._load().get("reporting", {}).get("reports_dir", "reports"))
+
+    @property
     def health_snapshot_dir(self) -> Path:
-        return BASE_DIR / "reports" / "health_snapshots"
+        return self.reports_dir / "health_snapshots"
 
     @property
     def check_systemd_script(self) -> Path:

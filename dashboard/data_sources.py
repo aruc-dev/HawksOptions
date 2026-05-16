@@ -64,7 +64,11 @@ def read_recent_log_issues(logs_dir: Path | None = None, max_lines_per_file: int
             match = LOG_ISSUE_RE.search(line)
             if not match:
                 continue
-            issues.append({"file": path.name, "level": "WARNING" if match.group(1) == "WARN" else match.group(1), "line": line})
+            issues.append({
+                "file": path.name,
+                "level": "WARNING" if match.group(1) == "WARN" else match.group(1),
+                "line": "Log issue detected; inspect server logs locally.",
+            })
             if len(issues) >= 20:
                 return issues
     return issues
@@ -88,6 +92,187 @@ def read_latest_health_snapshot(snapshot_dir: Path | None = None) -> dict[str, A
     except Exception as exc:
         return {"ok": False, "path": str(path), "data": None, "error": f"Could not read health snapshot at {path}: {exc}"}
     return {"ok": True, "path": str(path), "data": payload, "error": None}
+
+
+def latest_candidate_scan_path(reports_dir: Path | None = None) -> Path | None:
+    root = (reports_dir or cfg().reports_dir) / "candidate_scans"
+    if not root.exists():
+        return None
+    candidates = sorted(path for path in root.glob("scan_*.json") if path.is_file())
+    return candidates[-1] if candidates else None
+
+
+def read_latest_candidate_scan(reports_dir: Path | None = None) -> dict[str, Any]:
+    path = latest_candidate_scan_path(reports_dir)
+    if path is None:
+        return {"ok": False, "path": None, "data": None}
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception:
+        log.warning("could not read candidate scan %s", path)
+        return {"ok": False, "path": str(path), "data": None, "error": "Could not read latest candidate scan"}
+    return {"ok": True, "path": str(path), "data": payload}
+
+
+def read_latest_rejection_summary(reports_dir: Path | None = None) -> dict[str, Any]:
+    path = latest_candidate_scan_path(reports_dir)
+    if path is None:
+        return {"ok": False, "path": None, "summary": {"total_rejected": 0, "by_reason": {}, "by_strategy": {}, "by_stage": {}}}
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception:
+        log.warning("could not read rejection summary %s", path)
+        return {
+            "ok": False,
+            "path": str(path),
+            "summary": {"total_rejected": 0, "by_reason": {}, "by_strategy": {}, "by_stage": {}},
+            "error": "Could not read latest rejection summary",
+        }
+    rejected = payload.get("rejected", []) if isinstance(payload, dict) else []
+    if not isinstance(rejected, list):
+        rejected = []
+    by_reason: dict[str, int] = defaultdict(int)
+    by_strategy: dict[str, int] = defaultdict(int)
+    by_stage: dict[str, int] = defaultdict(int)
+    for item in rejected:
+        if not isinstance(item, dict):
+            continue
+        by_strategy[str(item.get("strategy", "unknown"))] += 1
+        by_stage[str(item.get("stage", "risk"))] += 1
+        for reason in item.get("reasons", []) or []:
+            by_reason[str(reason)] += 1
+    return {
+        "ok": True,
+        "path": str(path),
+        "summary": {
+            "total_rejected": len(rejected),
+            "by_reason": dict(sorted(by_reason.items(), key=lambda item: (-item[1], item[0]))),
+            "by_strategy": dict(sorted(by_strategy.items(), key=lambda item: (-item[1], item[0]))),
+            "by_stage": dict(sorted(by_stage.items(), key=lambda item: (-item[1], item[0]))),
+        },
+    }
+
+
+def latest_report_path(pattern: str, reports_dir: Path | None = None) -> Path | None:
+    root = reports_dir or cfg().reports_dir
+    if not root.exists():
+        return None
+    candidates = sorted(
+        (path for path in root.glob(pattern) if path.is_file()),
+        key=lambda path: (path.stat().st_mtime, path.name),
+    )
+    return candidates[-1] if candidates else None
+
+
+def read_json_fenced_report(pattern: str, reports_dir: Path | None = None) -> dict[str, Any]:
+    path = latest_report_path(pattern, reports_dir)
+    if path is None:
+        return {"ok": False, "path": None, "data": None}
+    text = path.read_text(encoding="utf-8")
+    marker = "```json"
+    start = text.find(marker)
+    if start < 0:
+        return {"ok": False, "path": str(path), "data": None, "error": "JSON fence not found"}
+    start += len(marker)
+    end = text.find("```", start)
+    if end < 0:
+        return {"ok": False, "path": str(path), "data": None, "error": "JSON fence not closed"}
+    try:
+        payload = json.loads(text[start:end].strip())
+    except json.JSONDecodeError:
+        log.warning("could not parse JSON report %s", path)
+        return {"ok": False, "path": str(path), "data": None, "error": "Could not parse latest report"}
+    return {"ok": True, "path": str(path), "data": payload}
+
+
+def read_latest_strategy_attribution(reports_dir: Path | None = None) -> dict[str, Any]:
+    return read_json_fenced_report("strategy_attribution_*d.md", reports_dir)
+
+
+def read_latest_drift_report(reports_dir: Path | None = None) -> dict[str, Any]:
+    return read_json_fenced_report("drift/paper_vs_backtest_*d.md", reports_dir)
+
+
+def read_latest_research_trace(reports_dir: Path | None = None) -> dict[str, Any]:
+    path = latest_report_path("research_traces/research_trace_*.json", reports_dir)
+    if path is None:
+        return {"ok": False, "path": None, "data": None}
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception:
+        log.warning("could not read research trace %s", path)
+        return {"ok": False, "path": str(path), "data": None, "error": "Could not read latest research trace"}
+    return {"ok": True, "path": str(path), "data": payload}
+
+
+def read_latest_ai_disagreements(reports_dir: Path | None = None) -> dict[str, Any]:
+    path = latest_report_path("ai_disagreements/ai_disagreements_*.json", reports_dir)
+    if path is None:
+        return {"ok": False, "path": None, "data": None}
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception:
+        log.warning("could not read AI disagreement log %s", path)
+        return {"ok": False, "path": str(path), "data": None, "error": "Could not read latest AI disagreement log"}
+    return {"ok": True, "path": str(path), "data": payload}
+
+
+def build_risk_budget(position_rows: list[dict[str, Any]], account: dict[str, Any]) -> dict[str, Any]:
+    account_cfg = cfg().account_config
+    equity = float(account.get("portfolio_value") or account.get("equity") or 0.0)
+    open_risk = round(sum(float(row.get("max_loss") or 0.0) for row in position_rows), 2)
+    portfolio_cap_pct = float(account_cfg.get("max_portfolio_risk_pct", 0.0))
+    single_cap_pct = float(account_cfg.get("max_single_position_risk_pct", 0.0))
+    portfolio_cap = round(equity * portfolio_cap_pct, 2) if equity > 0 else 0.0
+    return {
+        "equity": equity,
+        "open_risk": open_risk,
+        "portfolio_cap_pct": portfolio_cap_pct,
+        "portfolio_cap": portfolio_cap,
+        "portfolio_cap_remaining": round(max(0.0, portfolio_cap - open_risk), 2),
+        "single_position_cap_pct": single_cap_pct,
+        "single_position_cap": round(equity * single_cap_pct, 2) if equity > 0 else 0.0,
+        "open_position_count": len(position_rows),
+    }
+
+
+def build_candidate_funnel(candidate_scan: dict[str, Any]) -> dict[str, Any]:
+    payload = candidate_scan.get("data") if isinstance(candidate_scan, dict) else None
+    if not isinstance(payload, dict):
+        return {"ok": False, "path": candidate_scan.get("path") if isinstance(candidate_scan, dict) else None}
+    ranked = payload.get("ranked_candidates", []) if isinstance(payload.get("ranked_candidates"), list) else []
+    return {
+        "ok": True,
+        "path": candidate_scan.get("path"),
+        "candidate_count": payload.get("candidate_count", 0),
+        "accepted_count": payload.get("accepted_count", 0),
+        "rejected_count": payload.get("rejected_count", 0),
+        "research_candidate_count": len(payload.get("research_candidates", []) or []),
+        "top_candidates": ranked[:5],
+        "chosen_orders": payload.get("chosen_orders", []),
+    }
+
+
+def read_dashboard_analytics(position_rows: list[dict[str, Any]], account: dict[str, Any]) -> dict[str, Any]:
+    candidate_scan = read_latest_candidate_scan()
+    scan_payload = candidate_scan.get("data") if candidate_scan.get("ok") else {}
+    return {
+        "candidate_funnel": build_candidate_funnel(candidate_scan),
+        "scan_health": {
+            "ok": bool(candidate_scan.get("ok") and isinstance(scan_payload, dict) and scan_payload.get("scan_health")),
+            "path": candidate_scan.get("path"),
+            "data": scan_payload.get("scan_health") if isinstance(scan_payload, dict) else None,
+        },
+        "strategy_attribution": read_latest_strategy_attribution(),
+        "drift": read_latest_drift_report(),
+        "research_trace": read_latest_research_trace(),
+        "ai_disagreements": read_latest_ai_disagreements(),
+        "risk_budget": build_risk_budget(position_rows, account),
+    }
 
 
 def run_check_systemd(timeout_sec: int = 10) -> dict[str, Any]:

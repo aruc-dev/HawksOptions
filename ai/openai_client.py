@@ -48,6 +48,7 @@ _PRICE_OUTPUT_PER_1K = 0.0006
 _LOGGER = logging.getLogger(__name__)
 
 _VALID_SEVERITIES = {"none", "minor", "major"}
+AI_REVIEW_RESULT_KEYS = frozenset({"severity", "concerns", "source", "reason"})
 
 
 _SYSTEM_PROMPT = (
@@ -110,6 +111,17 @@ def _none_result(reason: str = "") -> dict[str, Any]:
     return {"severity": "none", "concerns": [], "source": "openai", "reason": reason}
 
 
+def safe_review_result(payload: dict[str, Any] | None, *, source: str = "openai") -> dict[str, Any]:
+    """Return the only AI fields allowed to leave the review boundary."""
+    payload = payload if isinstance(payload, dict) else {}
+    return {
+        "severity": _normalise_severity(payload.get("severity")),
+        "concerns": _normalise_concerns(payload.get("concerns")),
+        "source": str(payload.get("source") or source),
+        "reason": str(payload.get("reason") or ""),
+    }
+
+
 def _estimate_cost_usd(usage: dict[str, Any] | None) -> float:
     if not isinstance(usage, dict):
         return 0.0
@@ -165,12 +177,7 @@ def _parse_response(payload: dict[str, Any]) -> dict[str, Any]:
         return _none_result("non-JSON content")
     if not isinstance(body, dict):
         return _none_result("content not an object")
-    return {
-        "severity": _normalise_severity(body.get("severity")),
-        "concerns": _normalise_concerns(body.get("concerns")),
-        "source": "openai",
-        "reason": "",
-    }
+    return safe_review_result(body, source="openai")
 
 
 def _build_user_prompt(order_summary: dict[str, Any], headlines: list[str]) -> str:
