@@ -42,6 +42,7 @@ def run_risk_check(*, config: dict | None = None, as_of: date | None = None, dry
         execute_enabled=execute_closes,
         dry_run=dry_run,
     )
+    positions = [position for position in positions if position.closed_at is None]
     if execute_closes and not dry_run and payload["close_orders"]:
         save_positions(paths["positions"], positions)
     baseline = read_daily_baseline(paths["baseline"])

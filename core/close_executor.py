@@ -67,7 +67,8 @@ def close_order_plans(
         if action_name not in CLOSE_ACTIONS or strategy_id not in positions_by_id:
             continue
         position = positions_by_id[strategy_id]
-        if _pending_close_is_active(position, client):
+        pending_state = _pending_close_state(position, client)
+        if pending_state in {"active", "closed"}:
             plans.append(
                 {
                     "strategy_id": strategy_id,
@@ -77,8 +78,8 @@ def close_order_plans(
                     "payload": {},
                     "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                     "result": {
-                        "status": "skipped_pending_close",
-                        "order_id": position.pending_close_order_id,
+                        "status": "skipped_closed" if pending_state == "closed" else "skipped_pending_close",
+                        "order_id": position.pending_close_order_id or position.close_order_id,
                     },
                 }
             )
@@ -127,6 +128,9 @@ def _mark_pending_close(position: PositionSnapshot, action_name: str, result: An
         return
     status = str(result.get("status", "")).lower()
     order_id = str(result.get("id") or result.get("order_id") or "")
+    if status == "filled" and order_id:
+        _mark_closed(position, order_id=order_id, action_name=action_name)
+        return
     if status not in {"accepted", "new", "pending_new", "submitted"} or not order_id:
         return
     position.pending_close_order_id = order_id
@@ -134,19 +138,24 @@ def _mark_pending_close(position: PositionSnapshot, action_name: str, result: An
     position.pending_close_submitted_at = datetime.now(timezone.utc)
 
 
-def _pending_close_is_active(position: PositionSnapshot, client: Any) -> bool:
+def _pending_close_state(position: PositionSnapshot, client: Any) -> str:
     if not position.pending_close_order_id:
-        return False
+        return "inactive"
     status = _pending_close_status(position.pending_close_order_id, client)
-    if status in {"filled", "canceled", "cancelled", "rejected", "expired"}:
+    if status == "filled":
+        _mark_closed(position, order_id=position.pending_close_order_id, action_name=position.pending_close_action)
+        return "closed"
+    if status == "__lookup_failed__":
+        return "active"
+    if status in {"canceled", "cancelled", "rejected", "expired"}:
         _clear_pending_close(position)
-        return False
+        return "inactive"
     if status in {"accepted", "new", "pending_new", "submitted", "partially_filled", "pending_cancel", "pending_replace"}:
-        return True
+        return "active"
     if _pending_close_is_recent(position):
-        return True
+        return "active"
     _clear_pending_close(position)
-    return False
+    return "inactive"
 
 
 def _pending_close_status(order_id: str, client: Any) -> str:
@@ -157,7 +166,7 @@ def _pending_close_status(order_id: str, client: Any) -> str:
         try:
             raw = getter(order_id)
         except Exception:
-            continue
+            return "__lookup_failed__"
         if isinstance(raw, str):
             return raw.lower()
         if isinstance(raw, dict):
@@ -181,6 +190,13 @@ def _clear_pending_close(position: PositionSnapshot) -> None:
     position.pending_close_order_id = ""
     position.pending_close_action = ""
     position.pending_close_submitted_at = None
+
+
+def _mark_closed(position: PositionSnapshot, *, order_id: str, action_name: str) -> None:
+    position.closed_at = datetime.now(timezone.utc)
+    position.close_order_id = order_id
+    position.close_action = action_name
+    _clear_pending_close(position)
 
 
 def _closing_leg_payload(leg) -> dict[str, Any]:

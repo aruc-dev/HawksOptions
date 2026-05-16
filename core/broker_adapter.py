@@ -16,6 +16,9 @@ class MarketDataClient(Protocol):
     def get_option_chain(self, symbol: str, as_of: date | None = None) -> list[OptionContract]:
         ...
 
+    def get_option_quotes(self, symbols: list[str]) -> dict[str, dict[str, Any]]:
+        ...
+
 
 @runtime_checkable
 class AccountClient(Protocol):

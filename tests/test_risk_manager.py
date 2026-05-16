@@ -114,6 +114,11 @@ class PreTradeRiskTests(unittest.TestCase):
         self.assertEqual(order_spy_beta_delta(order, config), 520.0)
         self.assertEqual(aggregate_spy_beta_delta([], config), 0.0)
 
+    def test_spy_beta_delta_honors_negative_configured_symbol_beta(self):
+        config = {"portfolio_beta_limits": {"symbol_betas": {"SPY": -0.5}}}
+
+        self.assertEqual(order_spy_beta_delta(_order(), config), -520.0)
+
     def test_rejects_earnings_blackout(self):
         order = _order()
         order.next_earnings_date = date(2026, 4, 25)

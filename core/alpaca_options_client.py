@@ -17,6 +17,10 @@ from core.models import OptionContract
 from core.occ import format_occ_symbol, parse_occ_symbol
 
 TradingClient = None
+OptionHistoricalDataClient = None
+OptionLatestQuoteRequest = None
+StockHistoricalDataClient = None
+StockLatestQuoteRequest = None
 
 
 def _resolve_trading_client_class():
@@ -29,6 +33,34 @@ def _resolve_trading_client_class():
         return None
     TradingClient = AlpacaTradingClient
     return TradingClient
+
+
+def _resolve_option_data_classes():
+    global OptionHistoricalDataClient, OptionLatestQuoteRequest
+    if OptionHistoricalDataClient is not None and OptionLatestQuoteRequest is not None:
+        return OptionHistoricalDataClient, OptionLatestQuoteRequest
+    try:
+        from alpaca.data.historical.option import OptionHistoricalDataClient as AlpacaOptionHistoricalDataClient  # type: ignore
+        from alpaca.data.requests import OptionLatestQuoteRequest as AlpacaOptionLatestQuoteRequest  # type: ignore
+    except ImportError:  # pragma: no cover - optional dependency
+        return None, None
+    OptionHistoricalDataClient = AlpacaOptionHistoricalDataClient
+    OptionLatestQuoteRequest = AlpacaOptionLatestQuoteRequest
+    return OptionHistoricalDataClient, OptionLatestQuoteRequest
+
+
+def _resolve_stock_data_classes():
+    global StockHistoricalDataClient, StockLatestQuoteRequest
+    if StockHistoricalDataClient is not None and StockLatestQuoteRequest is not None:
+        return StockHistoricalDataClient, StockLatestQuoteRequest
+    try:
+        from alpaca.data.historical.stock import StockHistoricalDataClient as AlpacaStockHistoricalDataClient  # type: ignore
+        from alpaca.data.requests import StockLatestQuoteRequest as AlpacaStockLatestQuoteRequest  # type: ignore
+    except ImportError:  # pragma: no cover - optional dependency
+        return None, None
+    StockHistoricalDataClient = AlpacaStockHistoricalDataClient
+    StockLatestQuoteRequest = AlpacaStockLatestQuoteRequest
+    return StockHistoricalDataClient, StockLatestQuoteRequest
 
 
 @dataclass(frozen=True)
@@ -95,6 +127,8 @@ class AlpacaOptionsClient:
             use_sample_data = bool(self.config.get("market_data", {}).get("use_sample_data", True))
         self.use_sample_data = bool(use_sample_data)
         self._trading_client = None
+        self._option_data_client = None
+        self._stock_data_client = None
         self._underlyings = {item["symbol"]: item for item in load_underlyings(self.config)}
 
     def _mode(self) -> str:
@@ -110,6 +144,28 @@ class AlpacaOptionsClient:
                 raise RuntimeError("live Alpaca credentials are missing")
             self._trading_client = trading_client_class(key, secret, paper=self._mode() == "paper")
         return self._trading_client
+
+    def _get_option_data_client(self) -> Any:
+        data_client_class, _ = _resolve_option_data_classes()
+        if self.use_sample_data or data_client_class is None:
+            return None
+        if self._option_data_client is None:
+            key, secret = _credentials(self._mode())
+            if not key or not secret:
+                raise RuntimeError("live Alpaca credentials are missing")
+            self._option_data_client = data_client_class(key, secret)
+        return self._option_data_client
+
+    def _get_stock_data_client(self) -> Any:
+        data_client_class, _ = _resolve_stock_data_classes()
+        if self.use_sample_data or data_client_class is None:
+            return None
+        if self._stock_data_client is None:
+            key, secret = _credentials(self._mode())
+            if not key or not secret:
+                raise RuntimeError("live Alpaca credentials are missing")
+            self._stock_data_client = data_client_class(key, secret)
+        return self._stock_data_client
 
     def get_account(self) -> dict[str, Any]:
         if self.use_sample_data or _resolve_trading_client_class() is None:
@@ -226,12 +282,12 @@ class AlpacaOptionsClient:
     def get_option_quotes(self, symbols: list[str]) -> dict[str, dict[str, Any]]:
         """Return latest bid/ask quotes keyed by OCC symbol.
 
-        The sample-data path derives quotes from the deterministic chain. Live
-        provider wiring must be implemented before live order submission can
-        rely on this method for real NBBO.
+        The sample-data path derives quotes from the deterministic chain. The
+        live path uses Alpaca's option market-data client when alpaca-py is
+        installed and credentials are configured.
         """
         if not self.use_sample_data:
-            return {}
+            return self._get_live_option_quotes(symbols)
         out: dict[str, dict[str, Any]] = {}
         by_underlying: dict[str, list[str]] = {}
         for symbol in symbols:
@@ -259,13 +315,64 @@ class AlpacaOptionsClient:
 
     def get_market_volatility_snapshot(self, as_of: date | None = None) -> dict[str, Any]:
         if not self.use_sample_data:
-            return {
-                "vix": None,
-                "source": "unsupported_live_market_data",
-                "reason": "live VIX retrieval is not implemented",
-            }
+            return self._get_live_market_volatility_snapshot(as_of=as_of)
         as_of = as_of or date.today()
         return {"vix": _sample_vix(as_of), "source": "sample_data", "as_of": as_of.isoformat()}
+
+    def _get_live_option_quotes(self, symbols: list[str]) -> dict[str, dict[str, Any]]:
+        client = self._get_option_data_client()
+        _, request_class = _resolve_option_data_classes()
+        if client is None or request_class is None or not symbols:
+            return {}
+        request = request_class(symbol_or_symbols=symbols)
+        raw_quotes = client.get_option_latest_quote(request)
+        quotes = raw_quotes if isinstance(raw_quotes, dict) else getattr(raw_quotes, "data", {})
+        out: dict[str, dict[str, Any]] = {}
+        if not isinstance(quotes, dict):
+            return out
+        for symbol, quote in quotes.items():
+            bid = _quote_value(quote, "bid_price", "bp", "bid")
+            ask = _quote_value(quote, "ask_price", "ap", "ask")
+            if bid is None or ask is None or bid <= 0 or ask <= 0 or ask < bid:
+                continue
+            out[str(symbol)] = {
+                "bid": bid,
+                "ask": ask,
+                "source": "alpaca_option_latest_quote",
+            }
+        return out
+
+    def _get_live_market_volatility_snapshot(self, as_of: date | None = None) -> dict[str, Any]:
+        as_of = as_of or date.today()
+        symbol = str(self.config.get("market_data", {}).get("vix_symbol", "VIX")).strip() or "VIX"
+        client = self._get_stock_data_client()
+        _, request_class = _resolve_stock_data_classes()
+        if client is None or request_class is None:
+            return {
+                "vix": None,
+                "source": "alpaca_stock_latest_quote_unavailable",
+                "symbol": symbol,
+                "as_of": as_of.isoformat(),
+            }
+        request = request_class(symbol_or_symbols=[symbol])
+        raw_quotes = client.get_stock_latest_quote(request)
+        quotes = raw_quotes if isinstance(raw_quotes, dict) else getattr(raw_quotes, "data", {})
+        quote = quotes.get(symbol) if isinstance(quotes, dict) else None
+        bid = _quote_value(quote, "bid_price", "bp", "bid")
+        ask = _quote_value(quote, "ask_price", "ap", "ask")
+        if bid is None or ask is None or bid <= 0 or ask <= 0 or ask < bid:
+            return {
+                "vix": None,
+                "source": "alpaca_stock_latest_quote_invalid",
+                "symbol": symbol,
+                "as_of": as_of.isoformat(),
+            }
+        return {
+            "vix": round((bid + ask) / 2.0, 4),
+            "source": "alpaca_stock_latest_quote",
+            "symbol": symbol,
+            "as_of": as_of.isoformat(),
+        }
 
     def submit_order(self, payload: dict[str, Any]) -> dict[str, Any]:
         if self.use_sample_data or _resolve_trading_client_class() is None:
@@ -276,3 +383,17 @@ class AlpacaOptionsClient:
                 "payload": payload,
             }
         raise NotImplementedError("live order submission is intentionally not enabled in tests")
+
+
+def _quote_value(quote: Any, *names: str) -> float | None:
+    if quote is None:
+        return None
+    for name in names:
+        value = quote.get(name) if isinstance(quote, dict) else getattr(quote, name, None)
+        if value in (None, ""):
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None

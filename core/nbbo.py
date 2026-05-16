@@ -18,7 +18,7 @@ def capture_nbbo_snapshot(client: Any, order: StrategyOrder) -> dict[str, Any]:
         bid = _float_or_none(quote.get("bid"))
         ask = _float_or_none(quote.get("ask"))
         source = str(quote.get("source", "client_quote"))
-        if bid is None or ask is None:
+        if bid is None or ask is None or bid <= 0 or ask <= 0 or ask < bid:
             bid = float(leg.contract.bid)
             ask = float(leg.contract.ask)
             source = "order_contract"
@@ -58,7 +58,15 @@ def has_complete_client_nbbo(snapshot: dict[str, Any]) -> bool:
     legs = snapshot.get("legs", [])
     if not isinstance(legs, list) or not legs:
         return False
-    return all(isinstance(item, dict) and item.get("source") != "order_contract" for item in legs)
+    for item in legs:
+        if not isinstance(item, dict) or item.get("source") == "order_contract":
+            return False
+        bid = _float_or_none(item.get("bid"))
+        ask = _float_or_none(item.get("ask"))
+        midpoint = _float_or_none(item.get("midpoint"))
+        if bid is None or ask is None or midpoint is None or bid <= 0 or ask <= 0 or midpoint <= 0 or ask < bid:
+            return False
+    return True
 
 
 def _quotes_from_client(client: Any, symbols: list[str]) -> dict[str, dict[str, Any]]:

@@ -92,6 +92,14 @@ class _LiveQuoteSubmitClient(_QuoteClient):
         return {"id": "live-1", "status": "accepted", "payload": payload}
 
 
+class _InvalidQuoteSubmitClient(_LiveQuoteSubmitClient):
+    def get_option_quotes(self, symbols):
+        return {
+            "SPY260619P00500000": {"bid": 0.0, "ask": 0.0, "source": "unit"},
+            "SPY260619P00499000": {"bid": 0.7, "ask": 0.8, "source": "unit"},
+        }
+
+
 class OrderExecutorTests(unittest.TestCase):
     def test_build_multileg_payload(self):
         payload = build_order_payload(_order())
@@ -205,6 +213,16 @@ class OrderExecutorTests(unittest.TestCase):
         self.assertEqual(result["nbbo_snapshot"]["legs"][0]["source"], "unit")
         self.assertEqual(result["execution_quality"]["expected_net_opening_credit"], 55.0)
         self.assertEqual(len(client.payloads), 1)
+
+    def test_live_execution_rejects_invalid_client_nbbo_quotes(self):
+        order = _order()
+        client = _InvalidQuoteSubmitClient()
+
+        with self.assertRaisesRegex(RuntimeError, "fresh_nbbo_required_for_live_order"):
+            execute_order(client, order, dry_run=False)
+
+        self.assertEqual(client.payloads, [])
+        self.assertEqual(order.metadata["nbbo_snapshot"]["legs"][0]["source"], "order_contract")
 
     def test_trade_log_uses_nbbo_expected_prices(self):
         order = _order()

@@ -168,6 +168,9 @@ class PositionSnapshot:
     pending_close_order_id: str = ""
     pending_close_action: str = ""
     pending_close_submitted_at: datetime | None = None
+    closed_at: datetime | None = None
+    close_order_id: str = ""
+    close_action: str = ""
 
     @property
     def days_to_expiration(self) -> int:
@@ -227,6 +230,12 @@ class PositionSnapshot:
             payload["pending_close_action"] = self.pending_close_action
         if self.pending_close_submitted_at is not None:
             payload["pending_close_submitted_at"] = self.pending_close_submitted_at.isoformat(timespec="seconds")
+        if self.closed_at is not None:
+            payload["closed_at"] = self.closed_at.isoformat(timespec="seconds")
+        if self.close_order_id:
+            payload["close_order_id"] = self.close_order_id
+        if self.close_action:
+            payload["close_action"] = self.close_action
         return payload
 
     @classmethod
@@ -270,6 +279,9 @@ class PositionSnapshot:
             pending_close_order_id=str(payload.get("pending_close_order_id", "")),
             pending_close_action=str(payload.get("pending_close_action", "")),
             pending_close_submitted_at=_to_datetime(payload.get("pending_close_submitted_at")),
+            closed_at=_to_datetime(payload.get("closed_at")),
+            close_order_id=str(payload.get("close_order_id", "")),
+            close_action=str(payload.get("close_action", "")),
         )
 
 

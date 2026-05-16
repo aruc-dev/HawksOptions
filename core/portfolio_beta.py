@@ -53,12 +53,12 @@ def _beta_to_spy(symbol: str, config: dict[str, Any]) -> float:
     configured = beta_cfg.get("symbol_betas", {}) if isinstance(beta_cfg, dict) else {}
     if isinstance(configured, dict):
         value = _optional_float(configured.get(symbol))
-        if value is not None and value >= 0:
+        if value is not None:
             return value
     metadata = config.get("_underlying_metadata", {})
     if isinstance(metadata, dict):
         value = _optional_float((metadata.get(symbol) or {}).get("beta_to_spy"))
-        if value is not None and value >= 0:
+        if value is not None:
             return value
     return 1.0
 
