@@ -286,7 +286,12 @@ def _listed_on(payload: dict[str, Any], as_of: date) -> bool:
 
 
 def _optional_float(value: Any) -> float | None:
-    return None if value is None or value == "" else float(value)
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _contract_from_payload(symbol: str, payload: dict[str, Any]) -> OptionContract:

@@ -133,15 +133,19 @@ def trade_log_rows_from_order(
                 "iv_at_entry": contract.implied_volatility,
                 "iv_rank_at_entry": order.iv_rank,
                 "underlying_price_at_entry": contract.underlying_price,
-                "expected_entry_price": leg_quality.get("expected_price", contract.mid_price()),
-                "actual_entry_price": leg_quality.get("actual_price", ""),
-                "leg_slippage_dollars": leg_quality.get("slippage_dollars", ""),
-                "order_duration_seconds": quality.get("order_duration_seconds", ""),
+                "expected_entry_price": _csv_value(leg_quality.get("expected_price", contract.mid_price())),
+                "actual_entry_price": _csv_value(leg_quality.get("actual_price")),
+                "leg_slippage_dollars": _csv_value(leg_quality.get("slippage_dollars")),
+                "order_duration_seconds": _csv_value(quality.get("order_duration_seconds")),
                 "partial_fill": quality.get("partial_fill", False),
-                "retry_count": quality.get("retry_count", 0),
+                "retry_count": _csv_value(quality.get("retry_count", 0)),
             }
         )
     return rows
+
+
+def _csv_value(value: Any) -> object:
+    return "" if value is None else value
 
 
 def position_from_order(order: StrategyOrder, *, opened_at: datetime | None = None) -> PositionSnapshot:

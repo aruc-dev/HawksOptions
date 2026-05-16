@@ -1226,6 +1226,28 @@ class StrategyTodoTests(unittest.TestCase):
         self.assertEqual(chain[0].contract_symbol, "SPY260525P00095000")
         self.assertEqual(chain[0].delta, -0.2)
 
+    def test_historical_replay_tolerates_non_numeric_optional_greeks(self):
+        csv_text = "\n".join(
+            [
+                "record_type,symbol,date,contract_symbol,option_type,strike,expiration,bid,ask,open_interest,volume,delta,theta,vega,gamma",
+                "contract,SPY,2026-04-20,SPY260525P00095000,put,95,2026-05-25,1.0,1.1,500,100,NA,N/A,--,null",
+            ]
+        )
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "historical_replay.csv"
+            path.write_text(csv_text, encoding="utf-8")
+            config = deepcopy(load_config())
+            config["backtest"]["data_source"] = "historical_replay"
+            config["backtest"]["historical_data_file"] = str(path)
+
+            chain = HistoricalReplayClient(config).get_option_chain("SPY", as_of=date(2026, 4, 20))
+
+        self.assertEqual(len(chain), 1)
+        self.assertIsNone(chain[0].delta)
+        self.assertIsNone(chain[0].theta)
+        self.assertIsNone(chain[0].vega)
+        self.assertIsNone(chain[0].gamma)
+
     def test_provider_backed_replay_is_explicit_boundary(self):
         config = deepcopy(load_config())
         config["backtest"]["data_source"] = "historical_replay"

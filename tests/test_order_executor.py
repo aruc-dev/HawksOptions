@@ -8,7 +8,7 @@ from pathlib import Path
 from core.execution_quality import execution_quality_summary
 from core.limit_price import limit_price_improvement_plan
 from core.models import OptionContract, OrderLeg, StrategyOrder
-from core.order_executor import build_order_payload, execute_order, persist_open_order
+from core.order_executor import build_order_payload, execute_order, persist_open_order, trade_log_rows_from_order
 from core.trade_log import read_trade_rows
 
 
@@ -221,6 +221,19 @@ class OrderExecutorTests(unittest.TestCase):
             rows = read_trade_rows(trade_log)
             self.assertEqual(rows[0]["status"], "partially_filled")
             self.assertEqual(rows[0]["partial_fill"], "True")
+
+    def test_trade_log_rows_do_not_emit_none_for_unknown_fills(self):
+        rows = trade_log_rows_from_order(
+            _order(),
+            mode="paper",
+            order_id="ord-unknown",
+            execution_result={"execution_quality": {"legs": [{"leg_number": 1, "actual_price": None, "slippage_dollars": None}]}},
+        )
+
+        self.assertEqual(rows[0]["actual_entry_price"], "")
+        self.assertEqual(rows[0]["leg_slippage_dollars"], "")
+        self.assertEqual(rows[0]["order_duration_seconds"], "")
+        self.assertNotIn(None, rows[0].values())
 
 
 if __name__ == "__main__":
