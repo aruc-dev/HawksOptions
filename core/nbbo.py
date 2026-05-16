@@ -54,6 +54,13 @@ def expected_leg_midpoint(order: StrategyOrder, contract_symbol: str) -> float |
     return None
 
 
+def has_complete_client_nbbo(snapshot: dict[str, Any]) -> bool:
+    legs = snapshot.get("legs", [])
+    if not isinstance(legs, list) or not legs:
+        return False
+    return all(isinstance(item, dict) and item.get("source") != "order_contract" for item in legs)
+
+
 def _quotes_from_client(client: Any, symbols: list[str]) -> dict[str, dict[str, Any]]:
     getter = getattr(client, "get_option_quotes", None)
     if not callable(getter):

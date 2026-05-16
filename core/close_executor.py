@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from core.models import PositionSnapshot
@@ -25,6 +25,8 @@ ACTION_PRIORITY = {
     "take_profit": 4,
     "time_exit": 5,
 }
+
+PENDING_CLOSE_TTL = timedelta(minutes=15)
 
 
 def build_close_order_payload(position: PositionSnapshot) -> dict[str, Any]:
@@ -65,7 +67,7 @@ def close_order_plans(
         if action_name not in CLOSE_ACTIONS or strategy_id not in positions_by_id:
             continue
         position = positions_by_id[strategy_id]
-        if position.pending_close_order_id:
+        if _pending_close_is_active(position, client):
             plans.append(
                 {
                     "strategy_id": strategy_id,
@@ -132,6 +134,55 @@ def _mark_pending_close(position: PositionSnapshot, action_name: str, result: An
     position.pending_close_submitted_at = datetime.now(timezone.utc)
 
 
+def _pending_close_is_active(position: PositionSnapshot, client: Any) -> bool:
+    if not position.pending_close_order_id:
+        return False
+    status = _pending_close_status(position.pending_close_order_id, client)
+    if status in {"filled", "canceled", "cancelled", "rejected", "expired"}:
+        _clear_pending_close(position)
+        return False
+    if status in {"accepted", "new", "pending_new", "submitted", "partially_filled", "pending_cancel", "pending_replace"}:
+        return True
+    if _pending_close_is_recent(position):
+        return True
+    _clear_pending_close(position)
+    return False
+
+
+def _pending_close_status(order_id: str, client: Any) -> str:
+    for method_name in ("get_order_status", "get_order"):
+        getter = getattr(client, method_name, None)
+        if not callable(getter):
+            continue
+        try:
+            raw = getter(order_id)
+        except Exception:
+            continue
+        if isinstance(raw, str):
+            return raw.lower()
+        if isinstance(raw, dict):
+            return str(raw.get("status", "")).lower()
+        status = getattr(raw, "status", "")
+        if status:
+            return str(status).lower()
+    return ""
+
+
+def _pending_close_is_recent(position: PositionSnapshot) -> bool:
+    submitted_at = position.pending_close_submitted_at
+    if submitted_at is None:
+        return False
+    if submitted_at.tzinfo is None:
+        submitted_at = submitted_at.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - submitted_at < PENDING_CLOSE_TTL
+
+
+def _clear_pending_close(position: PositionSnapshot) -> None:
+    position.pending_close_order_id = ""
+    position.pending_close_action = ""
+    position.pending_close_submitted_at = None
+
+
 def _closing_leg_payload(leg) -> dict[str, Any]:
     return {
         "symbol": leg.contract.contract_symbol,
@@ -143,7 +194,7 @@ def _closing_leg_payload(leg) -> dict[str, Any]:
 
 def _closing_side(open_side: str) -> str:
     if open_side == "sell_to_open":
-        return "buy_to_close"
+        return "buy"
     if open_side == "buy_to_open":
-        return "sell_to_close"
+        return "sell"
     raise ValueError(f"unsupported open leg side {open_side!r}")

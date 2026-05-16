@@ -72,10 +72,23 @@ class _QuoteClient:
 
 
 class _LiveQuoteFallbackClient:
+    def __init__(self):
+        self.payloads = []
+
     def get_option_quotes(self, symbols):
         raise NotImplementedError("live option quote retrieval is not implemented")
 
     def submit_order(self, payload):
+        self.payloads.append(payload)
+        return {"id": "live-1", "status": "accepted", "payload": payload}
+
+
+class _LiveQuoteSubmitClient(_QuoteClient):
+    def __init__(self):
+        self.payloads = []
+
+    def submit_order(self, payload):
+        self.payloads.append(payload)
         return {"id": "live-1", "status": "accepted", "payload": payload}
 
 
@@ -173,14 +186,25 @@ class OrderExecutorTests(unittest.TestCase):
         self.assertEqual(quality["legs"][1]["expected_price"], 0.75)
         self.assertEqual(quality["expected_net_opening_credit"], 55.0)
 
-    def test_live_execution_falls_back_when_nbbo_provider_is_unimplemented(self):
+    def test_live_execution_requires_fresh_nbbo_quotes(self):
         order = _order()
+        client = _LiveQuoteFallbackClient()
 
-        result = execute_order(_LiveQuoteFallbackClient(), order, dry_run=False)
+        with self.assertRaisesRegex(RuntimeError, "fresh_nbbo_required_for_live_order"):
+            execute_order(client, order, dry_run=False)
+
+        self.assertEqual(client.payloads, [])
+
+    def test_live_execution_submits_with_fresh_nbbo_quotes(self):
+        order = _order()
+        client = _LiveQuoteSubmitClient()
+
+        result = execute_order(client, order, dry_run=False)
 
         self.assertEqual(result["id"], "live-1")
-        self.assertEqual(result["nbbo_snapshot"]["legs"][0]["source"], "order_contract")
-        self.assertEqual(result["execution_quality"]["expected_net_opening_credit"], order.net_opening_credit)
+        self.assertEqual(result["nbbo_snapshot"]["legs"][0]["source"], "unit")
+        self.assertEqual(result["execution_quality"]["expected_net_opening_credit"], 55.0)
+        self.assertEqual(len(client.payloads), 1)
 
     def test_trade_log_uses_nbbo_expected_prices(self):
         order = _order()

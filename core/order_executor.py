@@ -12,7 +12,7 @@ from core.execution_quality import execution_quality_summary
 from core.file_lock import atomic_write_text, lock_path_for, locked_open
 from core.limit_price import initial_limit_price, limit_price_improvement_plan
 from core.models import OrderLeg, PositionSnapshot, StrategyOrder
-from core.nbbo import capture_nbbo_snapshot
+from core.nbbo import capture_nbbo_snapshot, has_complete_client_nbbo
 from core.trade_log import append_trade_rows
 
 
@@ -67,6 +67,8 @@ def execute_order(
         result["execution_quality"] = execution_quality_summary(order, response=result)
         order.metadata["execution_quality"] = result["execution_quality"]
         return result
+    if not has_complete_client_nbbo(nbbo_snapshot):
+        raise RuntimeError("fresh_nbbo_required_for_live_order")
     result = client.submit_order(payload)
     if isinstance(result, dict):
         result["limit_price_improvement"] = limit_plan

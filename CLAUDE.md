@@ -9,6 +9,16 @@
 4. No same-day expiry entries.
 5. AI is veto-only and optional.
 
+## Persistent User Learnings
+
+When the user says "Learning for you", update the relevant Markdown guidance
+files with the instruction that follows. Do not leave these workflow learnings
+only in chat context.
+
+When the user provides a pull request link prefixed with "PR:", inspect the PR
+review comments, fix valid actionable comments, validate the changes, and
+resolve the comments only after everything is clean.
+
 ## Daily Operating Schedule
 
 - `run_scan.py`: every 30 minutes

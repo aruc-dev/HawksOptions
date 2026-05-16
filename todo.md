@@ -14,13 +14,13 @@ You are tasked with hardening the `HawksOptions` automated trading system. This 
 *Objective: Prevent correlated directional risk and ensure IV-Rank calculations are contextualized by broader market volatility.*
 
 - [x] **1.1 VIX-Aware IV-Rank Scaling**
-  - **Target:** `core/risk_engine.py` and `scheduler/run_scan.py`
+  - **Target:** `core/risk_manager.py`, `core/alpaca_options_client.py`, and `scheduler/run_scan.py`
   - **Action:** Modify the IV-Rank gating logic. Fetch the current VIX level via the Alpaca market data API.
   - **Logic:** Implement a scaling multiplier. If VIX < 15, the minimum IV-Rank threshold for short premium (CSP/Spreads) must be strictly > 50. If VIX > 25, lower the IV-Rank threshold to > 35 to capture structurally inflated premium.
-  - **Test:** Mock VIX API responses in `tests/test_risk_engine.py` to ensure the threshold dynamically shifts.
+  - **Test:** Mock VIX context in `tests/test_risk_manager.py` to ensure the threshold dynamically shifts.
 
 - [x] **1.2 SPY Beta-Weighting Engine**
-  - **Target:** `core/portfolio_metrics.py` (Create if missing) and `core/risk_engine.py`
+  - **Target:** `core/portfolio_beta.py` and `core/risk_manager.py`
   - **Action:** Build a function `calculate_portfolio_beta(open_positions)` that converts all open option deltas into SPY-beta-weighted deltas.
   - **Logic:** Reject new trade entries if the total portfolio SPY-beta-weighted delta exceeds a configurable threshold. The default example is 50% of total account net liquidation value when the optional gate is enabled.
 

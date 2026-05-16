@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from core.close_executor import build_close_order_payload, close_order_plans
 from core.models import OptionContract, OrderLeg, PositionSnapshot
@@ -48,20 +48,24 @@ def _position(*, qty: int = 1) -> PositionSnapshot:
 class _Client:
     def __init__(self):
         self.payloads = []
+        self.statuses = {}
 
     def submit_order(self, payload):
         self.payloads.append(payload)
         return {"id": "close-1", "status": "accepted"}
 
+    def get_order_status(self, order_id):
+        return self.statuses.get(order_id, "")
+
 
 class CloseExecutorTests(unittest.TestCase):
-    def test_build_close_order_payload_reverses_opening_sides(self):
+    def test_build_close_order_payload_uses_broker_close_sides(self):
         payload = build_close_order_payload(_position())
 
         self.assertEqual(payload["position_intent"], "close")
         self.assertEqual(payload["order_class"], "mleg")
-        self.assertEqual(payload["legs"][0]["side"], "buy_to_close")
-        self.assertEqual(payload["legs"][1]["side"], "sell_to_close")
+        self.assertEqual(payload["legs"][0]["side"], "buy")
+        self.assertEqual(payload["legs"][1]["side"], "sell")
         self.assertEqual(payload["limit_price"], 0.2)
 
     def test_close_order_plans_do_not_submit_when_disabled(self):
@@ -119,6 +123,7 @@ class CloseExecutorTests(unittest.TestCase):
         client = _Client()
         position = _position()
         position.pending_close_order_id = "close-pending"
+        position.pending_close_submitted_at = datetime.now(timezone.utc)
         plans = close_order_plans(
             [position],
             [{"strategy_id": "vertical_spread-SPY-20260423", "action": "take_profit"}],
@@ -129,6 +134,44 @@ class CloseExecutorTests(unittest.TestCase):
 
         self.assertEqual(plans[0]["result"]["status"], "skipped_pending_close")
         self.assertEqual(client.payloads, [])
+
+    def test_close_order_plans_clear_terminal_pending_close_status(self):
+        client = _Client()
+        client.statuses["close-pending"] = "canceled"
+        position = _position()
+        position.pending_close_order_id = "close-pending"
+        position.pending_close_action = "take_profit"
+        position.pending_close_submitted_at = datetime.now(timezone.utc)
+
+        plans = close_order_plans(
+            [position],
+            [{"strategy_id": "vertical_spread-SPY-20260423", "action": "stop_loss"}],
+            client=client,
+            execute_enabled=True,
+            dry_run=False,
+        )
+
+        self.assertEqual(plans[0]["result"]["id"], "close-1")
+        self.assertEqual(position.pending_close_order_id, "close-1")
+        self.assertEqual(position.pending_close_action, "stop_loss")
+
+    def test_close_order_plans_clear_stale_unknown_pending_close(self):
+        client = _Client()
+        position = _position()
+        position.pending_close_order_id = "close-stale"
+        position.pending_close_action = "take_profit"
+        position.pending_close_submitted_at = datetime.now(timezone.utc) - timedelta(minutes=30)
+
+        plans = close_order_plans(
+            [position],
+            [{"strategy_id": "vertical_spread-SPY-20260423", "action": "time_exit"}],
+            client=client,
+            execute_enabled=True,
+            dry_run=False,
+        )
+
+        self.assertEqual(plans[0]["result"]["id"], "close-1")
+        self.assertEqual(len(client.payloads), 1)
 
     def test_position_snapshot_persists_underlying_price_and_pending_close(self):
         position = _position()

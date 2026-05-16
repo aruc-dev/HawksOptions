@@ -259,7 +259,11 @@ class AlpacaOptionsClient:
 
     def get_market_volatility_snapshot(self, as_of: date | None = None) -> dict[str, Any]:
         if not self.use_sample_data:
-            return {}
+            return {
+                "vix": None,
+                "source": "unsupported_live_market_data",
+                "reason": "live VIX retrieval is not implemented",
+            }
         as_of = as_of or date.today()
         return {"vix": _sample_vix(as_of), "source": "sample_data", "as_of": as_of.isoformat()}
 

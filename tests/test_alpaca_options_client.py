@@ -23,6 +23,13 @@ class AlpacaOptionsClientTests(unittest.TestCase):
         self.assertGreaterEqual(snapshot["iv_percentile"], 0.0)
         self.assertLessEqual(snapshot["iv_percentile"], 100.0)
 
+    def test_live_market_volatility_snapshot_is_explicitly_unsupported(self):
+        client = AlpacaOptionsClient(load_config(), use_sample_data=False)
+        snapshot = client.get_market_volatility_snapshot(as_of=date(2026, 4, 23))
+
+        self.assertIsNone(snapshot["vix"])
+        self.assertEqual(snapshot["source"], "unsupported_live_market_data")
+
     def test_occ_symbols_round_trip(self):
         client = AlpacaOptionsClient(load_config(), use_sample_data=True)
         contract = client.get_option_chain("SPY", as_of=date(2026, 4, 23))[0]

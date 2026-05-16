@@ -51,6 +51,12 @@ class FakeBroker:
     def get_option_chain(self, symbol: str, as_of: date | None = None) -> list[OptionContract]:
         return [_order().legs[0].contract]
 
+    def get_option_quotes(self, symbols: list[str]) -> dict[str, dict[str, Any]]:
+        return {
+            symbol: {"bid": 1.0, "ask": 1.1, "source": "fake_broker"}
+            for symbol in symbols
+        }
+
     def get_account(self) -> dict[str, Any]:
         return {"equity": 100000.0, "portfolio_value": 100000.0, "cash": 90000.0, "buying_power": 200000.0}
 
