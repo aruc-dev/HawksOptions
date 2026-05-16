@@ -117,6 +117,9 @@ strategies:
     max_atr_pct: 0.03
     min_credit_to_width: 0.05
     min_net_credit: 5.0
+    # Require gross credit to clear modeled entry + exit costs. The sample
+    # replay showed low-credit condors were dominated by friction.
+    min_credit_to_roundtrip_cost: 1.25
     skip_if_earnings_within_dte: true
     weight: 1.0
 

@@ -491,6 +491,33 @@ class StrategyTodoTests(unittest.TestCase):
 
         self.assertIsNotNone(IronCondorStrategy(config).generate_order(context))
 
+    def test_iron_condor_cost_gate_blocks_friction_dominated_credit(self):
+        config = deepcopy(load_config())
+        config["strategies"]["iron_condor"]["min_iv_rank"] = 0
+        config["strategies"]["iron_condor"]["min_credit_to_width"] = 0
+        config["strategies"]["iron_condor"]["min_net_credit"] = 0
+        config["strategies"]["iron_condor"]["min_credit_to_roundtrip_cost"] = 6.0
+        expiration = date(2026, 6, 2)
+        context = StrategyContext(
+            underlying={"symbol": "SPY", "strategies_allowed": ["iron_condor"]},
+            chain=[
+                OptionContract("SPY260602P00095000", "SPY", "put", 95.0, expiration, 1.2, 1.3, open_interest=500, volume=50, delta=-0.18, underlying_price=100.0),
+                OptionContract("SPY260602P00090000", "SPY", "put", 90.0, expiration, 0.3, 0.35, open_interest=500, volume=50, delta=-0.08, underlying_price=100.0),
+                OptionContract("SPY260602C00105000", "SPY", "call", 105.0, expiration, 1.1, 1.2, open_interest=500, volume=50, delta=0.18, underlying_price=100.0),
+                OptionContract("SPY260602C00110000", "SPY", "call", 110.0, expiration, 0.25, 0.3, open_interest=500, volume=50, delta=0.08, underlying_price=100.0),
+            ],
+            config=config,
+            account={"equity": 100000.0, "portfolio_value": 100000.0, "cash": 100000.0, "buying_power": 200000.0},
+            iv_rank=10.0,
+            as_of=date(2026, 4, 23),
+            underlying_price=100.0,
+            current_iv=0.30,
+            realized_vol_20d=0.20,
+            atr_pct=0.01,
+        )
+
+        self.assertIsNone(IronCondorStrategy(config).generate_order(context))
+
     def test_credit_quality_gate_blocks_low_quality_vertical(self):
         config = deepcopy(load_config())
         config["strategies"]["vertical_spread"]["enabled"] = True

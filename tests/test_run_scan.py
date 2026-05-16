@@ -13,7 +13,9 @@ from scheduler.run_scan import _symbol_scan_health, scan_market
 
 class RunScanTests(unittest.TestCase):
     def test_dry_run_finds_candidates(self):
-        result = scan_market(config={}, as_of=date(2026, 4, 23), dry_run=True)
+        config = load_config()
+        config["strategies"]["iron_condor"]["min_credit_to_roundtrip_cost"] = 0
+        result = scan_market(config=config, as_of=date(2026, 4, 23), dry_run=True)
         self.assertGreaterEqual(result["accepted_count"], 1)
         self.assertIn("research_candidates", result)
         self.assertIn("research_traces", result)

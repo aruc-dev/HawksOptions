@@ -104,6 +104,30 @@ class BaseStrategy(ABC):
             return False
         return True
 
+    def modeled_entry_cost(self, legs: list[OrderLeg]) -> float:
+        """Estimate configured entry friction without importing backtest code."""
+        slippage = self.config.get("backtest", {}).get("slippage", {})
+        if not isinstance(slippage, dict):
+            slippage = {}
+        per_leg_cents = float(slippage.get("per_leg_cents", 0.0))
+        spread_pct = float(slippage.get("spread_pct", 0.0))
+        commission = float(slippage.get("commission_per_contract", 0.0))
+        cost = 0.0
+        for leg in legs:
+            qty = max(1, int(leg.qty))
+            spread = max(0.0, float(leg.contract.ask) - float(leg.contract.bid))
+            cost += ((per_leg_cents + (spread_pct * spread / 2.0)) * 100.0 * qty) + (commission * qty)
+        return round(cost, 4)
+
+    def cost_adjusted_credit_passes(self, *, credit: float, legs: list[OrderLeg]) -> bool:
+        min_credit_to_roundtrip_cost = float(self.params.get("min_credit_to_roundtrip_cost", 0.0))
+        if min_credit_to_roundtrip_cost <= 0:
+            return True
+        roundtrip_cost = self.modeled_entry_cost(legs) * 2.0
+        if roundtrip_cost <= 0:
+            return True
+        return credit >= roundtrip_cost * min_credit_to_roundtrip_cost
+
     def implied_realized_spread(self, context: StrategyContext) -> float:
         return round(float(context.current_iv or 0.0) - float(context.realized_vol_20d or 0.0), 6)
 

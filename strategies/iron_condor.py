@@ -53,6 +53,14 @@ class IronCondorStrategy(BaseStrategy):
             return None
         if not self.credit_quality_passes(credit=credit, width=max(put_width, call_width)):
             return None
+        legs = [
+            OrderLeg(contract=short_put, side="sell_to_open", qty=1),
+            OrderLeg(contract=long_put, side="buy_to_open", qty=1),
+            OrderLeg(contract=short_call, side="sell_to_open", qty=1),
+            OrderLeg(contract=long_call, side="buy_to_open", qty=1),
+        ]
+        if not self.cost_adjusted_credit_passes(credit=credit, legs=legs):
+            return None
         qty = self.order_quantity(context)
         if qty <= 0:
             return None
@@ -60,12 +68,7 @@ class IronCondorStrategy(BaseStrategy):
             strategy_name=self.name,
             strategy_id=self.strategy_id(context),
             underlying=context.underlying["symbol"],
-            legs=[
-                OrderLeg(contract=short_put, side="sell_to_open", qty=1),
-                OrderLeg(contract=long_put, side="buy_to_open", qty=1),
-                OrderLeg(contract=short_call, side="sell_to_open", qty=1),
-                OrderLeg(contract=long_call, side="buy_to_open", qty=1),
-            ],
+            legs=legs,
             max_loss=max_loss,
             max_profit=credit,
             required_buying_power=max_loss,

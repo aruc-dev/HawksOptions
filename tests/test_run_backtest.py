@@ -49,6 +49,7 @@ class _StaticChainClient:
 class RunBacktestTests(unittest.TestCase):
     def test_backtest_executes_trades(self):
         config = load_config()
+        config["strategies"]["iron_condor"]["min_credit_to_roundtrip_cost"] = 0
         result, report_path = run_backtest(config=config, strategies=build_enabled_strategies(config), days=10, starting_fund=10000.0)
         self.assertGreater(result.trade_count, 0)
         self.assertGreater(result.closed_trade_count, 0)
