@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import logging
+
 from core.contract_selector import select_iron_condor
 from core.models import OrderLeg, StrategyContext, StrategyOrder
 from strategies.base_strategy import BaseStrategy
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class IronCondorStrategy(BaseStrategy):
@@ -51,7 +55,12 @@ class IronCondorStrategy(BaseStrategy):
         max_loss = round(max(put_width, call_width) - credit, 2)
         if credit <= 0 or max_loss <= 0:
             return None
-        if not self.credit_quality_passes(credit=credit, width=max(put_width, call_width)):
+        width = max(put_width, call_width)
+        min_credit_to_width = float(self.params.get("min_credit_to_width", 0.0))
+        if width > 0 and min_credit_to_width > 0 and credit / width < min_credit_to_width:
+            _LOGGER.warning("Rejected: IC premium ratio below %.2f threshold.", min_credit_to_width)
+            return None
+        if not self.credit_quality_passes(credit=credit, width=width):
             return None
         legs = [
             OrderLeg(contract=short_put, side="sell_to_open", qty=1),

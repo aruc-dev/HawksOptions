@@ -680,6 +680,8 @@ def run_backtest(
             client=client,
             as_of=as_of,
         )
+        market_context_getter = getattr(client, "get_market_volatility_snapshot", None)
+        market_context = market_context_getter(as_of=as_of) if callable(market_context_getter) else {}
 
         account = {
             "equity": portfolio_equity,
@@ -687,6 +689,7 @@ def run_backtest(
             "cash": cash_balance,
             "buying_power": portfolio_equity * 2.0,
             "options_level": config.get("account", {}).get("options_level", 3),
+            "market_context": market_context,
         }
         candidate_pool = []
         for underlying in underlyings:

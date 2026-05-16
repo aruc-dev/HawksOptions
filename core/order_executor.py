@@ -12,6 +12,7 @@ from core.execution_quality import execution_quality_summary
 from core.file_lock import atomic_write_text, lock_path_for, locked_open
 from core.limit_price import initial_limit_price, limit_price_improvement_plan
 from core.models import OrderLeg, PositionSnapshot, StrategyOrder
+from core.nbbo import capture_nbbo_snapshot
 from core.trade_log import append_trade_rows
 
 
@@ -50,6 +51,7 @@ def execute_order(
     dry_run: bool = True,
     config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    nbbo_snapshot = capture_nbbo_snapshot(client, order)
     limit_plan = limit_price_improvement_plan(order, config=config)
     order.metadata["limit_price_improvement"] = limit_plan
     payload = build_order_payload(order, config=config)
@@ -60,6 +62,7 @@ def execute_order(
             "payload": payload,
             "simulated_fill": True,
             "limit_price_improvement": limit_plan,
+            "nbbo_snapshot": nbbo_snapshot,
         }
         result["execution_quality"] = execution_quality_summary(order, response=result)
         order.metadata["execution_quality"] = result["execution_quality"]
@@ -67,6 +70,7 @@ def execute_order(
     result = client.submit_order(payload)
     if isinstance(result, dict):
         result["limit_price_improvement"] = limit_plan
+        result["nbbo_snapshot"] = nbbo_snapshot
         result["execution_quality"] = execution_quality_summary(order, response=result)
         order.metadata["execution_quality"] = result["execution_quality"]
         return {

@@ -14,7 +14,7 @@ from core.config import load_config, load_underlyings
 from core.greeks_calculator import black_scholes_greeks
 from core.iv_rank_tracker import compute_iv_percentile, compute_iv_rank
 from core.models import OptionContract
-from core.occ import format_occ_symbol
+from core.occ import format_occ_symbol, parse_occ_symbol
 
 TradingClient = None
 
@@ -69,6 +69,11 @@ def _sample_iv(symbol: str, as_of: date) -> float:
     phase = sum(ord(ch) for ch in symbol) / 17.0
     cycle = math.sin(as_of.toordinal() / 13.0 + phase)
     return round(max(0.12, state.base_iv * (1.0 + 0.22 * cycle)), 4)
+
+
+def _sample_vix(as_of: date) -> float:
+    cycle = math.sin(as_of.toordinal() / 21.0)
+    return round(max(10.0, 20.0 + (7.0 * cycle)), 2)
 
 
 def _credentials(mode: str) -> tuple[str, str]:
@@ -217,6 +222,46 @@ class AlpacaOptionsClient:
                         )
                     )
         return chain
+
+    def get_option_quotes(self, symbols: list[str]) -> dict[str, dict[str, Any]]:
+        """Return latest bid/ask quotes keyed by OCC symbol.
+
+        The sample-data path derives quotes from the deterministic chain. Live
+        provider wiring must be implemented before live order submission can
+        rely on this method for real NBBO.
+        """
+        if not self.use_sample_data:
+            raise NotImplementedError("live option quote retrieval is not implemented")
+        out: dict[str, dict[str, Any]] = {}
+        by_underlying: dict[str, list[str]] = {}
+        for symbol in symbols:
+            try:
+                underlying = str(parse_occ_symbol(symbol)["underlying"])
+            except ValueError:
+                continue
+            by_underlying.setdefault(underlying, []).append(symbol)
+        today = date.today()
+        for underlying, contract_symbols in by_underlying.items():
+            chain = {
+                contract.contract_symbol: contract
+                for contract in self.get_option_chain(underlying, as_of=today)
+            }
+            for contract_symbol in contract_symbols:
+                contract = chain.get(contract_symbol)
+                if contract is None:
+                    continue
+                out[contract_symbol] = {
+                    "bid": contract.bid,
+                    "ask": contract.ask,
+                    "source": "sample_chain",
+                }
+        return out
+
+    def get_market_volatility_snapshot(self, as_of: date | None = None) -> dict[str, Any]:
+        if not self.use_sample_data:
+            return {}
+        as_of = as_of or date.today()
+        return {"vix": _sample_vix(as_of), "source": "sample_data", "as_of": as_of.isoformat()}
 
     def submit_order(self, payload: dict[str, Any]) -> dict[str, Any]:
         if self.use_sample_data or _resolve_trading_client_class() is None:

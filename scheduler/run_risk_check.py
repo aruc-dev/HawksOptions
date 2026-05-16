@@ -11,6 +11,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
+from core.close_executor import close_order_plans
 from core.order_executor import save_positions
 from core.risk_manager import (
     continuous_risk_checks,
@@ -22,7 +23,7 @@ from core.risk_manager import (
 from scheduler.common import current_positions, load_runtime, refresh_positions
 
 
-def run_risk_check(*, config: dict | None = None, as_of: date | None = None) -> dict[str, object]:
+def run_risk_check(*, config: dict | None = None, as_of: date | None = None, dry_run: bool = True) -> dict[str, object]:
     as_of = as_of or date.today()
     config, client, paths = load_runtime(config)
     positions = refresh_positions(current_positions(paths), client=client, as_of=as_of)
@@ -31,6 +32,15 @@ def run_risk_check(*, config: dict | None = None, as_of: date | None = None) -> 
         positions,
         config=config,
         as_of=datetime.combine(as_of, time(16, 0), tzinfo=timezone.utc),
+    )
+    risk_actions = config.get("risk_actions", {}) if isinstance(config, dict) else {}
+    execute_closes = bool(risk_actions.get("execute_closes", False)) if isinstance(risk_actions, dict) else False
+    payload["close_orders"] = close_order_plans(
+        positions,
+        payload.get("actions", []),
+        client=client,
+        execute_enabled=execute_closes,
+        dry_run=dry_run,
     )
     baseline = read_daily_baseline(paths["baseline"])
     if baseline is None or baseline.get("date") != as_of.isoformat():
@@ -50,8 +60,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run HawksOptions risk checks")
     parser.add_argument("--dry-run", action="store_true", help="Accepted for interface compatibility")
     args = parser.parse_args(argv)
-    _ = args
-    result = run_risk_check()
+    result = run_risk_check(dry_run=args.dry_run)
     print(json.dumps(result, indent=2))
     return 0
 

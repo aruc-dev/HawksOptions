@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from core.models import StrategyOrder
+from core.nbbo import expected_leg_midpoint
 
 
 def execution_quality_summary(
@@ -26,7 +27,7 @@ def execution_quality_summary(
     complete_actual_fill = True
     partial_fill = False
     for index, leg in enumerate(order.legs, start=1):
-        expected_price = leg.contract.mid_price()
+        expected_price = expected_leg_midpoint(order, leg.contract.contract_symbol) or leg.contract.mid_price()
         leg_response = response_legs.get(leg.contract.contract_symbol, {})
         actual_price = _actual_leg_price(leg_response, expected_price if _simulated_fill(response) else None)
         filled_qty = _filled_qty(leg_response, leg.qty if _simulated_fill(response) else None)
@@ -34,7 +35,8 @@ def execution_quality_summary(
             partial_fill = True
         if actual_price is None or filled_qty is None or filled_qty < leg.qty:
             complete_actual_fill = False
-        expected_cashflow = leg.opening_cashflow()
+        expected_sign = 1.0 if leg.side == "sell_to_open" else -1.0
+        expected_cashflow = round(expected_sign * expected_price * 100.0 * leg.qty, 2)
         actual_cashflow = None
         slippage_per_share = None
         slippage_dollars = None

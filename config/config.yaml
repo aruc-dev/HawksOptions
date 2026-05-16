@@ -24,10 +24,28 @@ gates:
   close_positions_days_before_earnings: 2
   min_iv_rank_for_short_premium: 30
   max_iv_rank_for_long_premium: 40
+  vix_iv_rank_scaling:
+    enabled: false
+    low_vix_below: 15
+    low_vix_min_iv_rank_for_short_premium: 50
+    high_vix_above: 25
+    high_vix_min_iv_rank_for_short_premium: 35
   # Calendar spreads: flag for close when the front short leg's mid
   # falls within this many dollars per share of intrinsic value
   # (early-assignment risk).
   calendar_assignment_slippage: 0.05
+
+portfolio_beta_limits:
+  enabled: false
+  # Optional SPY-beta-weighted dollar-delta ceiling. For example, 0.50
+  # caps projected beta-weighted delta at 50% of account equity when enabled.
+  max_abs_spy_beta_delta_pct: 0.50
+  symbol_betas: {}
+
+risk_actions:
+  # Continuous risk checks always produce close-order plans for actionable
+  # exits. Actual broker submission remains disabled unless explicitly enabled.
+  execute_closes: false
 
 underlyings:
   source: config/underlyings.yaml

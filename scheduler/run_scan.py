@@ -654,6 +654,9 @@ def scan_market(*, config: dict[str, Any], as_of: date | None = None, dry_run: b
     as_of = as_of or date.today()
     config, client, paths = load_runtime(config)
     account = client.get_account()
+    market_context_getter = getattr(client, "get_market_volatility_snapshot", None)
+    if callable(market_context_getter):
+        account = {**account, "market_context": market_context_getter(as_of=as_of)}
     positions = current_positions(paths)
     strategies = build_enabled_strategies(config)
     underlyings = configured_underlyings(config)

@@ -13,6 +13,7 @@ from core.concentration import concentration_limit_reasons
 from core.file_lock import atomic_write_text, lock_path_for, locked_open
 from core.models import OptionContract, PositionSnapshot, StrategyOrder
 from core.portfolio_allocation import allocation_limit_reasons
+from core.portfolio_beta import aggregate_spy_beta_delta, beta_limit_reasons
 from core.portfolio_greeks import aggregate_position_greeks, greek_limit_reasons
 from core.quote_freshness import quote_freshness_reasons
 from core.risk_throttle import risk_throttle_reasons
@@ -144,7 +145,8 @@ def pre_trade_check(
     if days_to_earnings is not None and days_to_earnings <= int(gates.get("earnings_blackout_days_before", 5)):
         reasons.append("earnings_blackout")
 
-    if order.net_opening_credit > 0 and order.iv_rank < float(gates.get("min_iv_rank_for_short_premium", 30)):
+    short_premium_iv_rank = _short_premium_iv_rank_threshold(order, gates, account)
+    if order.net_opening_credit > 0 and order.iv_rank < short_premium_iv_rank:
         reasons.append("iv_rank_too_low_for_short_premium")
     if order.net_opening_credit < 0 and order.iv_rank > float(gates.get("max_iv_rank_for_long_premium", 40)):
         reasons.append("iv_rank_too_high_for_long_premium")
@@ -162,6 +164,14 @@ def pre_trade_check(
     )
     reasons.extend(
         greek_limit_reasons(
+            order,
+            open_positions=open_positions,
+            account=account,
+            config=config,
+        )
+    )
+    reasons.extend(
+        beta_limit_reasons(
             order,
             open_positions=open_positions,
             account=account,
@@ -191,6 +201,39 @@ def pre_trade_check(
 def aggregate_portfolio_greeks(positions: Iterable[PositionSnapshot]) -> dict[str, float]:
     totals = aggregate_position_greeks(positions)
     return {key: round(value, 4) for key, value in totals.items()}
+
+
+def _short_premium_iv_rank_threshold(order: StrategyOrder, gates: dict[str, Any], account: dict[str, Any]) -> float:
+    base = float(gates.get("min_iv_rank_for_short_premium", 30))
+    scaling = gates.get("vix_iv_rank_scaling") or {}
+    if not isinstance(scaling, dict) or not bool(scaling.get("enabled", False)):
+        return base
+    vix = _market_vix(order, account)
+    if vix is None:
+        return base
+    if vix < float(scaling.get("low_vix_below", 15.0)):
+        return float(scaling.get("low_vix_min_iv_rank_for_short_premium", max(base, 50.0)))
+    if vix > float(scaling.get("high_vix_above", 25.0)):
+        return float(scaling.get("high_vix_min_iv_rank_for_short_premium", 35.0))
+    return base
+
+
+def _market_vix(order: StrategyOrder, account: dict[str, Any]) -> float | None:
+    candidates = []
+    order_context = order.metadata.get("market_context")
+    if isinstance(order_context, dict):
+        candidates.append(order_context.get("vix"))
+    account_context = account.get("market_context")
+    if isinstance(account_context, dict):
+        candidates.append(account_context.get("vix"))
+    for value in candidates:
+        if value in (None, ""):
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None
 
 
 def identify_elevated_positions(
@@ -259,6 +302,7 @@ def continuous_risk_checks(
     return {
         "generated_at": as_of.isoformat(timespec="seconds"),
         "portfolio_greeks": aggregate_portfolio_greeks(positions),
+        "portfolio_spy_beta_delta": aggregate_spy_beta_delta(positions, config),
         "actions": actions,
         "elevated_positions": sorted(elevated),
     }

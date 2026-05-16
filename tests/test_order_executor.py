@@ -63,6 +63,14 @@ def _order() -> StrategyOrder:
     )
 
 
+class _QuoteClient:
+    def get_option_quotes(self, symbols):
+        return {
+            "SPY260619P00500000": {"bid": 1.2, "ask": 1.4, "source": "unit"},
+            "SPY260619P00499000": {"bid": 0.7, "ask": 0.8, "source": "unit"},
+        }
+
+
 class OrderExecutorTests(unittest.TestCase):
     def test_build_multileg_payload(self):
         payload = build_order_payload(_order())
@@ -146,6 +154,24 @@ class OrderExecutorTests(unittest.TestCase):
         self.assertEqual(quality["retry_count"], 0)
         self.assertEqual(len(quality["legs"]), 2)
         self.assertIn("execution_quality", order.metadata)
+
+    def test_execution_quality_uses_nbbo_snapshot_midpoints(self):
+        order = _order()
+        result = execute_order(_QuoteClient(), order, dry_run=True)
+        quality = result["execution_quality"]
+
+        self.assertIn("nbbo_snapshot", result)
+        self.assertEqual(quality["legs"][0]["expected_price"], 1.3)
+        self.assertEqual(quality["legs"][1]["expected_price"], 0.75)
+        self.assertEqual(quality["expected_net_opening_credit"], 55.0)
+
+    def test_trade_log_uses_nbbo_expected_prices(self):
+        order = _order()
+        result = execute_order(_QuoteClient(), order, dry_run=True)
+        rows = trade_log_rows_from_order(order, mode="paper", order_id="dryrun", execution_result=result)
+
+        self.assertEqual(rows[0]["expected_entry_price"], 1.3)
+        self.assertEqual(rows[1]["expected_entry_price"], 0.75)
 
     def test_execution_quality_tracks_partial_leg_slippage(self):
         order = _order()

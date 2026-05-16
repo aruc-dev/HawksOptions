@@ -112,6 +112,29 @@ def strategy_summary(rows: Iterable[dict[str, Any]], *, lookback_days: int = 30,
     return sorted(out, key=lambda item: item["strategy"])
 
 
+def slippage_summary(rows: Iterable[dict[str, Any]], *, lookback_days: int = 30, now_utc: datetime | None = None) -> list[dict[str, Any]]:
+    now_utc = now_utc or datetime.now(timezone.utc)
+    cutoff = now_utc - timedelta(days=max(1, int(lookback_days)))
+    buckets: dict[str, dict[str, Any]] = defaultdict(lambda: {"strategy": "unknown", "leg_count": 0, "total_slippage_dollars": 0.0})
+    for row in rows:
+        ts = _parse_iso(str(row.get("timestamp", "")))
+        if ts is None or ts < cutoff:
+            continue
+        slippage = _float(row.get("leg_slippage_dollars"), default=0.0)
+        strategy = str(row.get("strategy", "unknown"))
+        bucket = buckets[strategy]
+        bucket["strategy"] = strategy
+        bucket["leg_count"] += 1
+        bucket["total_slippage_dollars"] += slippage
+    out = []
+    for bucket in buckets.values():
+        count = bucket["leg_count"] or 1
+        bucket["total_slippage_dollars"] = round(bucket["total_slippage_dollars"], 2)
+        bucket["average_slippage_dollars"] = round(bucket["total_slippage_dollars"] / count, 4)
+        out.append(bucket)
+    return sorted(out, key=lambda item: item["strategy"])
+
+
 def daily_loss_headroom(baseline: dict[str, Any] | None, current_portfolio_value: float, daily_loss_limit_pct: float) -> dict[str, Any]:
     out = {
         "baseline_value": 0.0,

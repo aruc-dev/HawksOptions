@@ -29,7 +29,7 @@ from dashboard.data_sources import (
     read_recent_log_issues,
     read_trades,
 )
-from dashboard.pnl import daily_loss_headroom, realized_pnl_today, realized_pnl_window, strategy_summary
+from dashboard.pnl import daily_loss_headroom, realized_pnl_today, realized_pnl_window, slippage_summary, strategy_summary
 from dashboard.security import AccessLogMiddleware, assert_production_auth_safe, require_auth
 
 log = logging.getLogger("dashboard.app")
@@ -88,6 +88,10 @@ def create_app() -> FastAPI:
     @app.get("/api/strategies/summary")
     async def api_strategies(_: str = Depends(require_auth)) -> dict[str, Any]:
         return {"strategies": strategy_summary(read_trades(), lookback_days=30)}
+
+    @app.get("/api/execution/slippage")
+    async def api_execution_slippage(_: str = Depends(require_auth)) -> dict[str, Any]:
+        return {"slippage": slippage_summary(read_trades(), lookback_days=30)}
 
     @app.get("/api/rejections/summary")
     async def api_rejections(_: str = Depends(require_auth)) -> dict[str, Any]:
@@ -150,6 +154,7 @@ def _build_state_snapshot() -> dict[str, Any]:
         "realized_30d": realized_pnl_window(rows, lookback_days=30),
         "daily_loss_headroom": daily_loss_headroom(read_daily_baseline(), account.get("portfolio_value", 0.0), cfg().daily_loss_limit_pct),
         "strategies": strategy_summary(rows, lookback_days=30),
+        "execution_slippage": slippage_summary(rows, lookback_days=30),
         "rejections": read_latest_rejection_summary(),
         "analytics": _safe_dashboard_analytics(position_rows, account),
         "recent_trades": [row for row in rows if str(row.get("status", "")).lower() == "closed"][:10],
