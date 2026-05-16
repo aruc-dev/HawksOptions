@@ -16,7 +16,6 @@ from core.portfolio_allocation import allocation_limit_reasons
 from core.portfolio_greeks import aggregate_position_greeks, greek_limit_reasons
 from core.quote_freshness import quote_freshness_reasons
 from core.risk_throttle import risk_throttle_reasons
-from core.strategy_types import LONG_PREMIUM_STRATEGIES, SHORT_PREMIUM_STRATEGIES
 
 
 @dataclass(frozen=True)
@@ -145,9 +144,9 @@ def pre_trade_check(
     if days_to_earnings is not None and days_to_earnings <= int(gates.get("earnings_blackout_days_before", 5)):
         reasons.append("earnings_blackout")
 
-    if order.strategy_name in SHORT_PREMIUM_STRATEGIES and order.iv_rank < float(gates.get("min_iv_rank_for_short_premium", 30)):
+    if order.net_opening_credit > 0 and order.iv_rank < float(gates.get("min_iv_rank_for_short_premium", 30)):
         reasons.append("iv_rank_too_low_for_short_premium")
-    if order.strategy_name in LONG_PREMIUM_STRATEGIES and order.iv_rank > float(gates.get("max_iv_rank_for_long_premium", 40)):
+    if order.net_opening_credit < 0 and order.iv_rank > float(gates.get("max_iv_rank_for_long_premium", 40)):
         reasons.append("iv_rank_too_high_for_long_premium")
 
     if _conflicts_with_open_position(order, open_positions):

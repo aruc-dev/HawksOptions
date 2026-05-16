@@ -20,19 +20,19 @@ def risk_throttle_reasons(
     if equity <= 0:
         return []
     drawdown_pct = _drawdown_pct(account)
-    daily_loss_pct = _optional_float(account.get("daily_loss_pct")) or 0.0
+    daily_loss_pct = _optional_pct(account.get("daily_loss_pct")) or 0.0
     reasons = []
 
-    drawdown_halt = _optional_float(throttle_cfg.get("max_drawdown_halt_pct"))
+    drawdown_halt = _optional_pct(throttle_cfg.get("max_drawdown_halt_pct"))
     if drawdown_halt is not None and drawdown_pct >= drawdown_halt:
         reasons.append("drawdown_halt_new_entries")
 
-    daily_halt = _optional_float(throttle_cfg.get("daily_loss_halt_pct"))
+    daily_halt = _optional_pct(throttle_cfg.get("daily_loss_halt_pct"))
     if daily_halt is not None and daily_loss_pct >= daily_halt:
         reasons.append("daily_loss_halt_new_entries")
 
-    reduce_threshold = _optional_float(throttle_cfg.get("reduce_risk_drawdown_pct"))
-    throttled_risk_pct = _optional_float(throttle_cfg.get("max_throttled_position_risk_pct"))
+    reduce_threshold = _optional_pct(throttle_cfg.get("reduce_risk_drawdown_pct"))
+    throttled_risk_pct = _optional_pct(throttle_cfg.get("max_throttled_position_risk_pct"))
     if (
         reduce_threshold is not None
         and throttled_risk_pct is not None
@@ -44,7 +44,7 @@ def risk_throttle_reasons(
 
 
 def _drawdown_pct(account: dict[str, Any]) -> float:
-    explicit = _optional_float(account.get("drawdown_pct"))
+    explicit = _optional_pct(account.get("drawdown_pct"))
     if explicit is not None:
         return max(0.0, explicit)
     equity = _equity(account)
@@ -69,3 +69,10 @@ def _optional_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _optional_pct(value: Any) -> float | None:
+    number = _optional_float(value)
+    if number is None:
+        return None
+    return number / 100.0 if number > 1.0 else number

@@ -14,15 +14,21 @@ from core.risk_manager import (
 )
 
 
-def _contract(symbol: str, option_type: str = "put", delta: float = -0.2) -> OptionContract:
+def _contract(
+    symbol: str,
+    option_type: str = "put",
+    delta: float = -0.2,
+    bid: float = 1.0,
+    ask: float = 1.05,
+) -> OptionContract:
     return OptionContract(
         contract_symbol=symbol,
         underlying="SPY",
         option_type=option_type,
         strike=500.0,
         expiration=date(2026, 6, 1),
-        bid=1.0,
-        ask=1.05,
+        bid=bid,
+        ask=ask,
         open_interest=500,
         volume=50,
         implied_volatility=0.24,
@@ -40,7 +46,10 @@ def _order(max_loss: float = 100.0, iv_rank: float = 50.0) -> StrategyOrder:
         strategy_name="vertical_spread",
         strategy_id="vertical_spread-SPY-20260423",
         underlying="SPY",
-        legs=[OrderLeg(contract=contract, side="sell_to_open"), OrderLeg(contract=_contract("SPY260619P00499000", delta=-0.18), side="buy_to_open")],
+        legs=[
+            OrderLeg(contract=contract, side="sell_to_open"),
+            OrderLeg(contract=_contract("SPY260619P00499000", delta=-0.18, bid=0.7, ask=0.75), side="buy_to_open"),
+        ],
         max_loss=max_loss,
         max_profit=25.0,
         required_buying_power=max_loss,
@@ -92,6 +101,26 @@ class PreTradeRiskTests(unittest.TestCase):
     def test_rejects_low_iv_rank_for_short_premium(self):
         decision = pre_trade_check(_order(iv_rank=10.0), account=self.account, config=self.config, open_positions=[], as_of=date(2026, 4, 23))
         self.assertIn("iv_rank_too_low_for_short_premium", decision.reasons)
+
+    def test_rejects_low_iv_rank_for_credit_butterfly_variant(self):
+        order = _order(iv_rank=10.0)
+        order.strategy_name = "butterfly"
+
+        decision = pre_trade_check(order, account=self.account, config=self.config, open_positions=[], as_of=date(2026, 4, 23))
+
+        self.assertIn("iv_rank_too_low_for_short_premium", decision.reasons)
+
+    def test_rejects_high_iv_rank_for_debit_butterfly_variant(self):
+        order = _order(iv_rank=80.0)
+        order.strategy_name = "butterfly"
+        order.legs = [
+            OrderLeg(contract=_contract("SPY260619P00500000", bid=0.7, ask=0.75), side="sell_to_open"),
+            OrderLeg(contract=_contract("SPY260619P00499000", delta=-0.18, bid=1.0, ask=1.05), side="buy_to_open"),
+        ]
+
+        decision = pre_trade_check(order, account=self.account, config=self.config, open_positions=[], as_of=date(2026, 4, 23))
+
+        self.assertIn("iv_rank_too_high_for_long_premium", decision.reasons)
 
     def test_rejects_dte_too_short(self):
         order = _order()
@@ -515,6 +544,39 @@ class PreTradeRiskTests(unittest.TestCase):
 
         self.assertIn("sector_concentration_cap_exceeded", decision.reasons)
 
+    def test_sector_concentration_cap_normalizes_metadata_case(self):
+        cfg = {
+            **self.config,
+            "_underlying_metadata": {
+                "QQQ": {"sector": "technology"},
+            },
+            "portfolio_concentration": {"sector_caps_pct": {"Technology": 0.10}},
+        }
+        existing = PositionSnapshot(
+            strategy_id="existing",
+            strategy_name="vertical_spread",
+            underlying="QQQ",
+            legs=[OrderLeg(contract=_contract("QQQ260619P00500000"), side="sell_to_open")],
+            opened_at=datetime.now(timezone.utc),
+            entry_credit=50.0,
+            max_loss=900.0,
+            profit_take_pct=0.5,
+            loss_stop_multiple=1.5,
+            roll_threshold_delta=-0.4,
+        )
+        order = _order(max_loss=200.0)
+        order.metadata["underlying"] = {"sector": "Technology"}
+
+        decision = pre_trade_check(
+            order,
+            account=self.account,
+            config=cfg,
+            open_positions=[existing],
+            as_of=date(2026, 4, 23),
+        )
+
+        self.assertIn("sector_concentration_cap_exceeded", decision.reasons)
+
     def test_rejects_correlation_group_concentration_cap(self):
         cfg = {
             **self.config,
@@ -539,6 +601,39 @@ class PreTradeRiskTests(unittest.TestCase):
 
         decision = pre_trade_check(
             _order(max_loss=200.0),
+            account=self.account,
+            config=cfg,
+            open_positions=[existing],
+            as_of=date(2026, 4, 23),
+        )
+
+        self.assertIn("correlation_group_concentration_cap_exceeded", decision.reasons)
+
+    def test_correlation_group_concentration_cap_normalizes_metadata_case(self):
+        cfg = {
+            **self.config,
+            "_underlying_metadata": {
+                "IWM": {"correlation_group": "broad_index"},
+            },
+            "portfolio_concentration": {"correlation_group_caps_pct": {"Broad_Index": 0.10}},
+        }
+        existing = PositionSnapshot(
+            strategy_id="existing",
+            strategy_name="iron_condor",
+            underlying="IWM",
+            legs=[OrderLeg(contract=_contract("IWM260619P00500000"), side="sell_to_open")],
+            opened_at=datetime.now(timezone.utc),
+            entry_credit=50.0,
+            max_loss=900.0,
+            profit_take_pct=0.5,
+            loss_stop_multiple=1.5,
+            roll_threshold_delta=-0.4,
+        )
+        order = _order(max_loss=200.0)
+        order.metadata["underlying"] = {"correlation_group": "Broad_Index"}
+
+        decision = pre_trade_check(
+            order,
             account=self.account,
             config=cfg,
             open_positions=[existing],
@@ -593,6 +688,26 @@ class PreTradeRiskTests(unittest.TestCase):
         )
 
         self.assertIn("daily_loss_halt_new_entries", decision.reasons)
+
+    def test_risk_throttle_normalizes_percent_point_account_inputs(self):
+        cfg = {
+            **self.config,
+            "risk_throttle": {
+                "max_drawdown_halt_pct": 0.10,
+                "daily_loss_halt_pct": 0.10,
+            },
+        }
+        account = {**self.account, "drawdown_pct": 6, "daily_loss_pct": 6}
+
+        decision = pre_trade_check(
+            _order(max_loss=100.0),
+            account=account,
+            config=cfg,
+            open_positions=[],
+            as_of=date(2026, 4, 23),
+        )
+
+        self.assertTrue(decision.accepted)
 
     def test_rejects_drawdown_reduced_risk_size(self):
         cfg = {

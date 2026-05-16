@@ -25,8 +25,8 @@ def concentration_limit_reasons(
     incoming_risk = max(float(order.max_loss), 0.0)
     metadata = _metadata_by_symbol(config)
     order_metadata = _symbol_metadata(order.underlying, metadata, order.metadata.get("underlying"))
-    sector = str(order_metadata.get("sector", "") or "")
-    correlation_group = str(order_metadata.get("correlation_group", "") or "")
+    sector = _normalized_group_value(order_metadata.get("sector"))
+    correlation_group = _normalized_group_value(order_metadata.get("correlation_group"))
 
     if sector:
         cap_pct = _cap_for(concentration_cfg, "sector", sector)
@@ -69,19 +69,24 @@ def _risk_by_key(
 ) -> dict[str, float]:
     usage: dict[str, float] = defaultdict(float)
     for position in positions:
-        value = str(metadata.get(position.underlying, {}).get(key, "") or "")
+        value = _normalized_group_value(metadata.get(position.underlying, {}).get(key))
         if value:
             usage[value] += max(float(position.max_loss), 0.0)
     return usage
+
+
+def _normalized_group_value(value: Any) -> str:
+    return str(value or "").strip().lower()
 
 
 def _cap_for(config: dict[str, Any], key: str, value: str) -> float | None:
     specific = config.get(f"{key}_caps_pct")
     if isinstance(specific, dict) and value in specific:
         return _non_negative_float(specific[value])
-    lowered = value.lower()
-    if isinstance(specific, dict) and lowered in specific:
-        return _non_negative_float(specific[lowered])
+    if isinstance(specific, dict):
+        for cap_key, cap_value in specific.items():
+            if _normalized_group_value(cap_key) == value:
+                return _non_negative_float(cap_value)
     return _non_negative_float(config.get(f"max_{key}_allocation_pct"))
 
 
