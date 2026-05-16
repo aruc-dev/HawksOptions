@@ -1,65 +1,252 @@
 {% extends "base.html" %}
 {% block title %}HawksOptions — {{ mode|upper }}{% endblock %}
 {% block body %}
-<main class="shell">
-  <header class="masthead">
-    <div>
-      <h1>HawksOptions</h1>
-      <p>Read-only options operations dashboard</p>
+<header class="ho-header">
+  <div class="ho-brand">
+    <svg class="ho-brand-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M3 17.5 8.5 12l3.8 3.8L21 7.1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M16 7h5v5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <span class="ho-brand-title">HawksOptions</span>
+    <span id="mode-badge" class="ho-badge">{{ mode }}</span>
+    <span class="ho-status-dot-wrap" title="system health">
+      <span id="health-dot" class="ho-status-dot bg-slate-600"></span>
+    </span>
+  </div>
+  <div class="ho-header-meta">
+    <span id="refresh-status">loading...</span>
+    <span class="ho-version">v{{ version }}</span>
+  </div>
+</header>
+
+<main class="ho-main">
+  <section class="ho-kpi-strip" aria-label="Portfolio summary">
+    <div class="ho-kpi">
+      <div class="ho-kpi-label">Portfolio</div>
+      <div id="acct-portfolio" class="ho-kpi-value text-white">-</div>
     </div>
-    <div class="badge">{{ mode|upper }}</div>
-  </header>
-
-  <section class="panel">
-    <h2>Overview</h2>
-    <p id="overview-status">Loading state…</p>
+    <div class="ho-kpi-sep"></div>
+    <div class="ho-kpi">
+      <div class="ho-kpi-label">Cash</div>
+      <div id="acct-cash" class="ho-kpi-value text-slate-300">-</div>
+    </div>
+    <div class="ho-kpi-sep"></div>
+    <div class="ho-kpi">
+      <div class="ho-kpi-label">Buying Power</div>
+      <div id="acct-buying-power" class="ho-kpi-value text-slate-300">-</div>
+    </div>
+    <div class="ho-kpi-sep"></div>
+    <div class="ho-kpi">
+      <div class="ho-kpi-label">Open Risk</div>
+      <div id="risk-open" class="ho-kpi-value text-slate-300">-</div>
+      <div id="risk-open-detail" class="ho-kpi-sub">-</div>
+    </div>
+    <div class="ho-kpi-sep"></div>
+    <div class="ho-kpi">
+      <div class="ho-kpi-label">Realized Today</div>
+      <div id="realized-today" class="ho-kpi-value">-</div>
+      <div id="realized-today-detail" class="ho-kpi-sub">-</div>
+    </div>
+    <div class="ho-kpi-sep"></div>
+    <div class="ho-kpi">
+      <div class="ho-kpi-label">Realized 30d</div>
+      <div id="realized-30d" class="ho-kpi-value">-</div>
+      <div id="realized-30d-detail" class="ho-kpi-sub">-</div>
+    </div>
+    <div class="ho-kpi-sep"></div>
+    <div class="ho-kpi">
+      <div class="ho-kpi-label">Candidates</div>
+      <div id="candidate-counts" class="ho-kpi-value text-slate-300">-</div>
+      <div id="candidate-detail" class="ho-kpi-sub">-</div>
+    </div>
   </section>
 
-  <section class="panel">
-    <h2>Open Strategies</h2>
-    <pre id="positions-json">[]</pre>
+  <section class="ho-card ho-headroom-card">
+    <div class="ho-card-header ho-headroom-header">
+      <span class="ho-section-label">Daily Loss Headroom</span>
+      <span id="headroom-status" class="ho-status-pill" data-status="unknown">-</span>
+    </div>
+    <div class="ho-progress-track">
+      <div id="headroom-bar" class="ho-progress-bar bg-emerald-500" style="width:0%"></div>
+    </div>
+    <div id="headroom-text" class="ho-headroom-text mono">-</div>
   </section>
 
-  <section class="panel">
-    <h2>Portfolio Greeks</h2>
-    <pre id="greeks-json">{}</pre>
+  <section class="ho-row ho-row-primary">
+    <div class="ho-card">
+      <div class="ho-card-header mb-3">
+        <span class="ho-section-label">Open Strategies</span>
+        <span id="strategy-count" class="ho-pill">0</span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="ho-table ho-wide-table">
+          <thead>
+            <tr>
+              <th class="text-left">Underlying</th>
+              <th class="text-left">Strategy</th>
+              <th class="text-right">DTE</th>
+              <th class="text-right">Credit</th>
+              <th class="text-right">Close Cost</th>
+              <th class="text-right">P&amp;L</th>
+              <th class="text-right">Short Δ</th>
+              <th class="text-left">Earnings</th>
+            </tr>
+          </thead>
+          <tbody id="strategies-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <aside class="ho-side-stack">
+      <div class="ho-card">
+        <div class="ho-card-header mb-3">
+          <span class="ho-section-label">Portfolio Greeks</span>
+          <span id="greeks-status" class="ho-pill">live</span>
+        </div>
+        <div class="ho-greeks-grid">
+          <div><span>Delta</span><strong id="greek-delta">-</strong></div>
+          <div><span>Theta</span><strong id="greek-theta">-</strong></div>
+          <div><span>Vega</span><strong id="greek-vega">-</strong></div>
+          <div><span>Gamma</span><strong id="greek-gamma">-</strong></div>
+        </div>
+      </div>
+
+      <div class="ho-card">
+        <div class="ho-card-header mb-2">
+          <span class="ho-section-label">System Health</span>
+          <span id="health-status" class="ho-status-text">-</span>
+        </div>
+        <div id="health-summary" class="ho-muted">-</div>
+        <details class="ho-details mt-1">
+          <summary>systemd status</summary>
+          <pre id="health-pre" class="ho-pre"></pre>
+        </details>
+        <details class="ho-details mt-1">
+          <summary>recent warning/error lines</summary>
+          <pre id="health-log-issues" class="ho-pre"></pre>
+        </details>
+      </div>
+    </aside>
   </section>
 
-  <section class="panel">
-    <h2>Candidate Funnel</h2>
-    <pre id="candidate-funnel-json">{}</pre>
+  <section class="ho-row ho-row-secondary">
+    <div class="ho-card">
+      <div class="ho-card-header mb-3">
+        <span class="ho-section-label">Risk Budget</span>
+        <span id="risk-budget-pill" class="ho-pill">-</span>
+      </div>
+      <div class="ho-budget-grid">
+        <div>
+          <span>Portfolio Cap</span>
+          <strong id="portfolio-cap">-</strong>
+        </div>
+        <div>
+          <span>Remaining</span>
+          <strong id="portfolio-cap-remaining">-</strong>
+        </div>
+        <div>
+          <span>Single Position Cap</span>
+          <strong id="single-cap">-</strong>
+        </div>
+        <div>
+          <span>Open Positions</span>
+          <strong id="open-position-count">-</strong>
+        </div>
+      </div>
+      <div class="ho-progress-track mt-1">
+        <div id="risk-budget-bar" class="ho-progress-bar bg-emerald-500" style="width:0%"></div>
+      </div>
+    </div>
+
+    <div class="ho-card">
+      <div class="ho-card-header mb-3">
+        <span class="ho-section-label">Candidate Funnel</span>
+        <span id="funnel-source" class="ho-pill">-</span>
+      </div>
+      <div class="ho-funnel">
+        <div><span>Scanned</span><strong id="funnel-candidates">-</strong></div>
+        <div><span>Accepted</span><strong id="funnel-accepted">-</strong></div>
+        <div><span>Rejected</span><strong id="funnel-rejected">-</strong></div>
+        <div><span>Research</span><strong id="funnel-research">-</strong></div>
+      </div>
+      <div id="rejection-reasons" class="ho-chip-list"></div>
+    </div>
   </section>
 
-  <section class="panel">
-    <h2>Risk Budget</h2>
-    <pre id="risk-budget-json">{}</pre>
+  <section class="ho-row ho-row-secondary">
+    <div class="ho-card">
+      <div class="ho-card-header mb-3">
+        <span class="ho-section-label">Scan Quality</span>
+        <span id="scan-quality-pill" class="ho-pill">-</span>
+      </div>
+      <div id="scan-quality-grid" class="ho-quality-grid"></div>
+    </div>
+
+    <div class="ho-card">
+      <div class="ho-card-header mb-3">
+        <span class="ho-section-label">AI &amp; Research</span>
+        <span id="ai-status" class="ho-pill">-</span>
+      </div>
+      <div class="ho-metric-list">
+        <div><span>Research traces</span><strong id="research-trace-count">-</strong></div>
+        <div><span>AI disagreements</span><strong id="ai-disagreement-count">-</strong></div>
+        <div><span>Daily spend</span><strong id="ai-spend">-</strong></div>
+      </div>
+    </div>
   </section>
 
-  <section class="panel">
-    <h2>Strategy Attribution</h2>
-    <pre id="strategy-attribution-json">{}</pre>
+  <section class="ho-card">
+    <div class="ho-card-header mb-3">
+      <span class="ho-section-label">Strategy Attribution</span>
+      <span id="attribution-source" class="ho-pill">-</span>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="ho-table ho-wide-table">
+        <thead>
+          <tr>
+            <th class="text-left">Strategy</th>
+            <th class="text-right">Trades</th>
+            <th class="text-right">Win%</th>
+            <th class="text-right">Risk Used</th>
+            <th class="text-right">Return</th>
+            <th class="text-right">P&amp;L</th>
+          </tr>
+        </thead>
+        <tbody id="attribution-tbody"></tbody>
+      </table>
+    </div>
   </section>
 
-  <section class="panel">
-    <h2>Paper vs Backtest Drift</h2>
-    <pre id="drift-json">{}</pre>
-  </section>
+  <section class="ho-row ho-row-tertiary">
+    <div class="ho-card">
+      <div class="ho-card-header mb-3">
+        <span class="ho-section-label">IV Rank</span>
+        <span id="iv-count" class="ho-pill">0</span>
+      </div>
+      <div id="iv-rank-list" class="ho-rank-list"></div>
+    </div>
 
-  <section class="panel">
-    <h2>Scan Health</h2>
-    <pre id="scan-health-json">{}</pre>
-  </section>
+    <div class="ho-card">
+      <div class="ho-card-header mb-3">
+        <span class="ho-section-label">Upcoming Earnings</span>
+        <span id="earnings-count" class="ho-pill">0</span>
+      </div>
+      <div id="earnings-list" class="ho-list"></div>
+    </div>
 
-  <section class="panel">
-    <h2>Research Traces</h2>
-    <pre id="research-trace-json">{}</pre>
-  </section>
-
-  <section class="panel">
-    <h2>AI Disagreements</h2>
-    <pre id="ai-disagreements-json">{}</pre>
+    <div class="ho-card">
+      <div class="ho-card-header mb-3">
+        <span class="ho-section-label">Paper vs Backtest Drift</span>
+        <span id="drift-status" class="ho-pill">-</span>
+      </div>
+      <div id="drift-summary" class="ho-muted">-</div>
+    </div>
   </section>
 </main>
 
-<script src="/static/app.js"></script>
+<footer class="ho-footer">
+  Read-only · All times UTC · Auto-refresh 15s
+</footer>
+
+<script src="/static/app.js?v={{ version }}"></script>
 {% endblock %}

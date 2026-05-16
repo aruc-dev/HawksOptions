@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -15,22 +14,19 @@ LOCAL_CONFIG_PATH = BASE_DIR / "config" / "config.local.yaml"
 
 
 def resolve_config_path(path: Path | None = None) -> Path:
-    """Return the config file path to use.
+    """Return a complete config file path.
 
     Resolution order:
     1. *path* — if an explicit path is supplied it is returned as-is.
-    2. ``LOCAL_CONFIG_PATH`` — only when the ``HAWKS_USE_LOCAL_CONFIG``
-       environment variable is set to a non-empty value **and** the file
-       exists on disk.
-    3. ``CONFIG_PATH`` — the committed reference config.
+    2. ``CONFIG_PATH`` — the committed reference config.
 
-    Gating behind the env var prevents a developer's uncommitted
-    ``config.local.yaml`` from silently changing test behaviour.
+    ``load_config()`` is preferred for runtime use because it deep-merges
+    ``config.local.yaml`` over ``config.yaml`` instead of loading the local
+    file as a full replacement. This helper intentionally does not return the
+    local overlay by default because that file can be partial.
     """
     if path is not None:
         return path
-    if os.environ.get("HAWKS_USE_LOCAL_CONFIG") and LOCAL_CONFIG_PATH.exists():
-        return LOCAL_CONFIG_PATH
     return CONFIG_PATH
 
 
@@ -42,8 +38,25 @@ def load_yaml(path: Path) -> dict[str, Any]:
     return payload
 
 
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Return a new dict with *override* recursively merged into *base*."""
+    result = deepcopy(base)
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = deepcopy(value)
+    return result
+
+
 def load_config(path: Path | None = None) -> dict[str, Any]:
-    config = load_yaml(resolve_config_path(path))
+    if path is not None:
+        config = load_yaml(path)
+    else:
+        config = load_yaml(CONFIG_PATH)
+        if LOCAL_CONFIG_PATH.is_file():
+            config = _deep_merge(config, load_yaml(LOCAL_CONFIG_PATH))
+
     config.setdefault("mode", "paper")
     config.setdefault("account", {})
     config.setdefault("gates", {})

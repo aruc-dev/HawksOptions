@@ -20,7 +20,7 @@ without sharing runtime state or mutating the reference repo.
 ```text
 HawksOptions/
 ├── assets/                  # branding and visual assets
-├── config/                  # config.yaml, config.local.yaml (optional full replacement, git-ignored), .env.example, underlyings.yaml
+├── config/                  # config.yaml, config.local.yaml (optional local overlay, git-ignored), .env.example, underlyings.yaml
 ├── core/                    # options primitives, risk engine, trade logging
 ├── strategies/              # CSP, covered call, vertical spread, iron condor
 ├── ai/                      # veto-only AI helpers (optional)
@@ -47,6 +47,13 @@ python3 scheduler/run_scan.py --dry-run
 
 The default config uses sample market data so the system stays runnable before
 real Alpaca keys are added.
+
+## Local Configuration
+
+All committed defaults live in `config/config.yaml`. For machine-local changes,
+create `config/config.local.yaml`; it is deep-merged over `config/config.yaml`,
+so it only needs the keys you want to override. Files matching
+`config/config.local*` are git-ignored and must not be committed.
 
 ## Optional: Beads Task Tracking
 

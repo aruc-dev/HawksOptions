@@ -1,85 +1,165 @@
-"""Unit tests for core.config path resolution."""
+"""Unit tests for core.config local overlay handling."""
 
 from __future__ import annotations
 
-import os
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from core.config import CONFIG_PATH, resolve_config_path
+import core.config as cfg_mod
 
 
 class TestResolveConfigPath(unittest.TestCase):
-    """Tests for resolve_config_path()."""
-
     def test_explicit_path_is_returned_unchanged(self):
-        """An explicit path argument is always returned, env var has no effect."""
         custom = Path("/tmp/my_custom_config.yaml")
-        with patch.dict(os.environ, {"HAWKS_USE_LOCAL_CONFIG": "1"}):
-            result = resolve_config_path(custom)
+        result = cfg_mod.resolve_config_path(custom)
         self.assertEqual(result, custom)
 
-    def test_explicit_path_returned_even_without_env_var(self):
-        explicit = Path("/tmp/another.yaml")
-        env = {k: v for k, v in os.environ.items() if k != "HAWKS_USE_LOCAL_CONFIG"}
-        with patch.dict(os.environ, env, clear=True):
-            result = resolve_config_path(explicit)
-        self.assertEqual(result, explicit)
+    def test_default_returns_committed_config_when_local_absent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = root / "config" / "config.yaml"
+            local = root / "config" / "config.local.yaml"
+            base.parent.mkdir()
+            base.write_text("mode: paper\n", encoding="utf-8")
 
-    def test_default_without_env_var_returns_committed_config(self):
-        """Without the env var, load_config() always uses the committed config.yaml."""
-        env = {k: v for k, v in os.environ.items() if k != "HAWKS_USE_LOCAL_CONFIG"}
-        with patch.dict(os.environ, env, clear=True):
-            # Simulate local config existing on disk — should still be ignored.
-            with patch("core.config.LOCAL_CONFIG_PATH") as mock_local:
-                mock_local.exists.return_value = True
-                result = resolve_config_path()
-        self.assertEqual(result, CONFIG_PATH)
+            with patch.object(cfg_mod, "CONFIG_PATH", base), patch.object(cfg_mod, "LOCAL_CONFIG_PATH", local):
+                result = cfg_mod.resolve_config_path()
 
-    def test_local_config_used_when_env_var_set_and_file_exists(self):
-        """LOCAL_CONFIG_PATH is selected when env var is set and the file exists."""
-        with patch.dict(os.environ, {"HAWKS_USE_LOCAL_CONFIG": "1"}):
-            with patch("core.config.LOCAL_CONFIG_PATH") as mock_local:
-                mock_local.exists.return_value = True
-                # resolve_config_path compares mock_local with LOCAL_CONFIG_PATH
-                # so we need the function to return it correctly.
-                import core.config as cfg_mod
-                original = cfg_mod.LOCAL_CONFIG_PATH
-                cfg_mod.LOCAL_CONFIG_PATH = mock_local
-                try:
-                    result = resolve_config_path()
-                finally:
-                    cfg_mod.LOCAL_CONFIG_PATH = original
-        self.assertIs(result, mock_local)
+        self.assertEqual(result, base)
 
-    def test_local_config_absent_falls_back_to_committed_config(self):
-        """When env var is set but local file is missing, fall back to config.yaml."""
-        with patch.dict(os.environ, {"HAWKS_USE_LOCAL_CONFIG": "1"}):
-            with patch("core.config.LOCAL_CONFIG_PATH") as mock_local:
-                mock_local.exists.return_value = False
-                import core.config as cfg_mod
-                original = cfg_mod.LOCAL_CONFIG_PATH
-                cfg_mod.LOCAL_CONFIG_PATH = mock_local
-                try:
-                    result = resolve_config_path()
-                finally:
-                    cfg_mod.LOCAL_CONFIG_PATH = original
-        self.assertEqual(result, CONFIG_PATH)
+    def test_default_returns_committed_config_when_local_present(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = root / "config" / "config.yaml"
+            local = root / "config" / "config.local.yaml"
+            base.parent.mkdir()
+            base.write_text("mode: paper\n", encoding="utf-8")
+            local.write_text("mode: live\n", encoding="utf-8")
 
-    def test_env_var_empty_string_does_not_select_local_config(self):
-        """An empty HAWKS_USE_LOCAL_CONFIG value is treated as not set."""
-        with patch.dict(os.environ, {"HAWKS_USE_LOCAL_CONFIG": ""}):
-            with patch("core.config.LOCAL_CONFIG_PATH") as mock_local:
-                mock_local.exists.return_value = True
-                import core.config as cfg_mod
-                original = cfg_mod.LOCAL_CONFIG_PATH
-                cfg_mod.LOCAL_CONFIG_PATH = mock_local
-                try:
-                    result = resolve_config_path()
-                finally:
-                    cfg_mod.LOCAL_CONFIG_PATH = original
-        self.assertEqual(result, CONFIG_PATH)
+            with patch.object(cfg_mod, "CONFIG_PATH", base), patch.object(cfg_mod, "LOCAL_CONFIG_PATH", local):
+                result = cfg_mod.resolve_config_path()
+
+        self.assertEqual(result, base)
+
+
+class TestLocalConfigOverlay(unittest.TestCase):
+    def test_deep_merge_preserves_nested_base_keys(self):
+        base = {"mode": "paper", "account": {"max_positions": 5, "daily_loss_halt_pct": 0.03}}
+        override = {"account": {"daily_loss_halt_pct": 0.02}}
+
+        result = cfg_mod._deep_merge(base, override)
+
+        self.assertEqual(result["mode"], "paper")
+        self.assertEqual(result["account"]["max_positions"], 5)
+        self.assertEqual(result["account"]["daily_loss_halt_pct"], 0.02)
+        self.assertEqual(base["account"]["daily_loss_halt_pct"], 0.03)
+
+    def test_load_config_uses_base_when_local_absent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = root / "config" / "config.yaml"
+            local = root / "config" / "config.local.yaml"
+            base.parent.mkdir()
+            base.write_text("mode: paper\naccount:\n  max_positions: 5\n", encoding="utf-8")
+
+            with patch.object(cfg_mod, "CONFIG_PATH", base), patch.object(cfg_mod, "LOCAL_CONFIG_PATH", local):
+                config = cfg_mod.load_config()
+
+        self.assertEqual(config["mode"], "paper")
+        self.assertEqual(config["account"]["max_positions"], 5)
+
+    def test_load_config_deep_merges_local_overlay(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = root / "config" / "config.yaml"
+            local = root / "config" / "config.local.yaml"
+            base.parent.mkdir()
+            base.write_text(
+                "mode: paper\n"
+                "account:\n"
+                "  max_positions: 5\n"
+                "  daily_loss_halt_pct: 0.03\n"
+                "reporting:\n"
+                "  trade_log_file: data/trades.csv\n",
+                encoding="utf-8",
+            )
+            local.write_text(
+                "mode: live\n"
+                "account:\n"
+                "  daily_loss_halt_pct: 0.02\n",
+                encoding="utf-8",
+            )
+
+            with patch.object(cfg_mod, "CONFIG_PATH", base), patch.object(cfg_mod, "LOCAL_CONFIG_PATH", local):
+                config = cfg_mod.load_config()
+
+        self.assertEqual(config["mode"], "live")
+        self.assertEqual(config["account"]["max_positions"], 5)
+        self.assertEqual(config["account"]["daily_loss_halt_pct"], 0.02)
+        self.assertEqual(config["reporting"]["trade_log_file"], "data/trades.csv")
+
+    def test_empty_local_config_does_not_break_base_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = root / "config" / "config.yaml"
+            local = root / "config" / "config.local.yaml"
+            base.parent.mkdir()
+            base.write_text("mode: paper\n", encoding="utf-8")
+            local.write_text("", encoding="utf-8")
+
+            with patch.object(cfg_mod, "CONFIG_PATH", base), patch.object(cfg_mod, "LOCAL_CONFIG_PATH", local):
+                config = cfg_mod.load_config()
+
+        self.assertEqual(config["mode"], "paper")
+
+    def test_explicit_path_bypasses_local_overlay(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = root / "config" / "config.yaml"
+            local = root / "config" / "config.local.yaml"
+            base.parent.mkdir()
+            base.write_text("mode: paper\n", encoding="utf-8")
+            local.write_text("mode: live\n", encoding="utf-8")
+
+            with patch.object(cfg_mod, "CONFIG_PATH", base), patch.object(cfg_mod, "LOCAL_CONFIG_PATH", local):
+                config = cfg_mod.load_config(base)
+
+        self.assertEqual(config["mode"], "paper")
+
+    def test_dashboard_config_uses_merged_local_overlay(self):
+        from dashboard.config import DashboardConfig
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = root / "config" / "config.yaml"
+            local = root / "config" / "config.local.yaml"
+            base.parent.mkdir()
+            base.write_text(
+                "mode: paper\n"
+                "account:\n"
+                "  daily_loss_halt_pct: 0.03\n"
+                "reporting:\n"
+                "  trade_log_file: data/trades.csv\n",
+                encoding="utf-8",
+            )
+            local.write_text(
+                "mode: live\n"
+                "account:\n"
+                "  daily_loss_halt_pct: 0.02\n",
+                encoding="utf-8",
+            )
+
+            with patch.object(cfg_mod, "CONFIG_PATH", base), patch.object(cfg_mod, "LOCAL_CONFIG_PATH", local):
+                config = DashboardConfig()
+                mode = config.mode
+                daily_loss_limit = config.daily_loss_limit_pct
+                trade_log_path = config.trade_log_path
+
+        self.assertEqual(mode, "live")
+        self.assertEqual(daily_loss_limit, 0.02)
+        self.assertEqual(trade_log_path.name, "trades.csv")
 
 
 if __name__ == "__main__":
