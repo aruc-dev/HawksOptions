@@ -4,6 +4,28 @@ set -euo pipefail
 SECRET_NAME="${HAWKSOPTIONS_SECRET_NAME:-hawksoptions/keys}"
 AWS_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
 OUTPUT_FILE="${HAWKSOPTIONS_SHM_SECRET_FILE:-/dev/shm/.hawksoptions.env}"
+MAX_AGE_SECONDS="${HAWKSOPTIONS_SECRETS_MAX_AGE_SECONDS:-0}"
+FORCE_REFRESH="${HAWKSOPTIONS_SECRETS_FORCE_REFRESH:-0}"
+
+if [[ ! "$MAX_AGE_SECONDS" =~ ^[0-9]+$ ]]; then
+  echo "HAWKSOPTIONS_SECRETS_MAX_AGE_SECONDS must be a non-negative integer" >&2
+  exit 1
+fi
+
+if [[ "$FORCE_REFRESH" != "1" && -s "$OUTPUT_FILE" ]]; then
+  if [[ "$MAX_AGE_SECONDS" == "0" ]]; then
+    echo "reusing existing $OUTPUT_FILE"
+    exit 0
+  fi
+
+  now="$(date +%s)"
+  mtime="$(stat -c %Y "$OUTPUT_FILE" 2>/dev/null || stat -f %m "$OUTPUT_FILE" 2>/dev/null || echo 0)"
+  age=$((now - mtime))
+  if (( age >= 0 && age < MAX_AGE_SECONDS )); then
+    echo "reusing fresh $OUTPUT_FILE age=${age}s max_age=${MAX_AGE_SECONDS}s"
+    exit 0
+  fi
+fi
 
 if ! command -v aws >/dev/null 2>&1; then
   echo "aws CLI is required" >&2

@@ -1,7 +1,6 @@
 [Unit]
 Description=HawksOptions elevated risk watch
 After=network-online.target hawksoptions-secrets.service
-Requires=hawksoptions-secrets.service
 
 [Service]
 Type=oneshot
