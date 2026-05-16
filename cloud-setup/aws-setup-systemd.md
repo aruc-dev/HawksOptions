@@ -354,7 +354,9 @@ The bundled unit templates run the secrets service as the same OS user as the
 trading jobs. This makes `/dev/shm/.hawksoptions.env` readable by the trading
 services while still keeping mode `0600`. The `sed` command above adjusts
 `User=`, `Group=`, and project paths when deploying to a different account or
-directory.
+directory. Existing installs that previously created the RAM file as `root` are
+handled by the secrets service `ExecStartPre`, which normalizes ownership and
+mode before the `ec2-user` loader runs.
 
 Add the RAM secret file as a required environment file for every trading job.
 This makes jobs fail closed if the secrets service has not written credentials.
@@ -598,16 +600,20 @@ hawksoptions-dashboard.service
         +--> /etc/hawksoptions-dash/env only
 ```
 
-Trading jobs do not `Require=hawksoptions-secrets.service`; high-frequency jobs
-must not call AWS Secrets Manager before every run. Instead,
-`hawksoptions-secrets.timer` runs the loader as a safety net. By default the
-loader reuses an existing non-empty `/dev/shm/.hawksoptions.env` and only calls
-AWS Secrets Manager when that RAM file is missing/empty. Set
+Trading jobs do not use `Requires=hawksoptions-secrets.service`; high-frequency jobs
+must not call AWS Secrets Manager before every run. They use `Wants=` and
+`After=` for `network-online.target` and `hawksoptions-secrets.service`, so boot
+or persistent timer runs pull prerequisites into the transaction without making
+the trading job directly require a fresh AWS fetch. By default the loader reuses
+an existing non-empty `/dev/shm/.hawksoptions.env` that contains the required
+paper keys and only calls AWS Secrets Manager when that RAM file is missing,
+empty, invalid, explicitly forced, or older than an opt-in max age. Set
 `HAWKSOPTIONS_SECRETS_FORCE_REFRESH=1` for a manual key-rotation refresh, or set
 `HAWKSOPTIONS_SECRETS_MAX_AGE_SECONDS` to a positive value if you explicitly want
-age-based refresh. The drop-in from Step 9 requires `/dev/shm/.hawksoptions.env`
-as an `EnvironmentFile`. If secrets are missing, trading jobs fail before Python
-starts.
+age-based refresh. `hawksoptions-secrets.service` uses `PassEnvironment=` for
+those two override variables. The drop-in from Step 9 requires
+`/dev/shm/.hawksoptions.env` as an `EnvironmentFile`. If secrets are missing,
+trading jobs fail before Python starts.
 
 The dashboard uses a separate environment file and is blocked from reading the
 trading RAM secret file.
@@ -673,14 +679,25 @@ sudo systemctl status hawksoptions-secrets.service
 Temporarily stop all scheduled trading jobs:
 
 ```bash
-sudo systemctl stop 'hawksoptions-*.timer'
-sudo systemctl disable 'hawksoptions-*.timer'
+sudo systemctl stop \
+  hawksoptions-scan.timer \
+  hawksoptions-risk-check.timer \
+  hawksoptions-risk-watch.timer \
+  hawksoptions-roll-check.timer \
+  hawksoptions-eod-report.timer
+sudo systemctl disable \
+  hawksoptions-scan.timer \
+  hawksoptions-risk-check.timer \
+  hawksoptions-risk-watch.timer \
+  hawksoptions-roll-check.timer \
+  hawksoptions-eod-report.timer
 ```
 
 Re-enable timers:
 
 ```bash
 sudo systemctl enable --now \
+  hawksoptions-secrets.timer \
   hawksoptions-scan.timer \
   hawksoptions-risk-check.timer \
   hawksoptions-risk-watch.timer \

@@ -1,5 +1,6 @@
 [Unit]
 Description=HawksOptions roll check
+Wants=network-online.target hawksoptions-secrets.service
 After=network-online.target hawksoptions-secrets.service
 
 [Service]
