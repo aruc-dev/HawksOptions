@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -90,6 +91,35 @@ class DataSourceTests(unittest.TestCase):
         self.assertEqual(out["summary"]["total_rejected"], 0)
         self.assertIn("error", out)
         self.assertNotIn("Expecting", out["error"])
+
+    def test_read_latest_rejection_summary_ignores_invalid_rejected_shape(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reports = Path(tmp)
+            scan_dir = reports / "candidate_scans"
+            scan_dir.mkdir()
+            (scan_dir / "scan_2026-04-23_100000000000Z.json").write_text(
+                '{"rejected": {"strategy": "iron_condor", "reasons": ["dte_gate_failed"]}}',
+                encoding="utf-8",
+            )
+
+            out = data_sources.read_latest_rejection_summary(reports)
+
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["summary"]["total_rejected"], 0)
+        self.assertEqual(out["summary"]["by_reason"], {})
+
+    def test_latest_report_path_uses_mtime_not_lexicographic_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reports = Path(tmp)
+            older = reports / "strategy_attribution_30d.md"
+            newer = reports / "strategy_attribution_10d.md"
+            older.write_text("older", encoding="utf-8")
+            time.sleep(0.01)
+            newer.write_text("newer", encoding="utf-8")
+
+            out = data_sources.latest_report_path("strategy_attribution_*d.md", reports)
+
+        self.assertEqual(out, newer)
 
     def test_read_dashboard_analytics_uses_latest_reports(self):
         with tempfile.TemporaryDirectory() as tmp:

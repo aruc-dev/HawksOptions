@@ -10,6 +10,7 @@ from core.backtest_engine import (
     _fill_succeeds,
     _leg_slippage_cost,
     _mark_to_market,
+    _richer_metrics,
     _slippage_settings,
     run_backtest,
 )
@@ -99,6 +100,17 @@ class RunBacktestTests(unittest.TestCase):
         self.assertEqual(strategy["average_risk_used"], 400.0)
         self.assertEqual(strategy["realized_drawdown"], 10.0)
         self.assertEqual(attribution["by_symbol"]["SPY"]["total_pnl"], 40.0)
+
+    def test_sortino_uses_matching_annualized_return_and_downside_scales(self):
+        metrics = _richer_metrics(
+            equity_curve=[10000.0, 10100.0, 9999.0, 9799.02],
+            closed_trades=[],
+            days=3,
+            exposure_days=0,
+            starting_fund=10000.0,
+        )
+
+        self.assertEqual(metrics["sortino"], -21.166)
 
     def test_slippage_is_charged_on_entry_and_exit_prices(self):
         sell_leg = OrderLeg(contract=_contract("SPY260619P00500000", 1.00, 1.20), side="sell_to_open")

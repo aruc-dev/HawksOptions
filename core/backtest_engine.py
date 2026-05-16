@@ -100,6 +100,8 @@ def _richer_metrics(
     winning_pnls = [pnl for pnl in pnls if pnl > 0]
     losing_pnls = [pnl for pnl in pnls if pnl < 0]
     downside_dev = pstdev(downside) if len(downside) > 1 else 0.0
+    annualized_mean_return = (mean(returns) * 252.0) if returns else 0.0
+    annualized_downside_dev = downside_dev * sqrt(252.0)
     max_drawdown = _max_drawdown(equity_curve)
     total_return = ((equity_curve[-1] / equity_curve[0]) - 1.0) if len(equity_curve) > 1 and equity_curve[0] > 0 else 0.0
     annualized_return = ((1.0 + total_return) ** (365.0 / max(days, 1))) - 1.0 if total_return > -1.0 else -1.0
@@ -108,7 +110,7 @@ def _richer_metrics(
     gross_profit = sum(winning_pnls)
     gross_loss = abs(sum(losing_pnls))
     metrics = {
-        "sortino": _risk_ratio((mean(returns) * sqrt(252)) if returns else 0.0, downside_dev),
+        "sortino": _risk_ratio(annualized_mean_return, annualized_downside_dev),
         "calmar": _risk_ratio(annualized_return, max_drawdown),
         "var_95_pct": round(var_95 * 100.0, 4),
         "cvar_95_pct": round((mean(cvar_tail) if cvar_tail else 0.0) * 100.0, 4),

@@ -131,6 +131,8 @@ def read_latest_rejection_summary(reports_dir: Path | None = None) -> dict[str, 
             "error": "Could not read latest rejection summary",
         }
     rejected = payload.get("rejected", []) if isinstance(payload, dict) else []
+    if not isinstance(rejected, list):
+        rejected = []
     by_reason: dict[str, int] = defaultdict(int)
     by_strategy: dict[str, int] = defaultdict(int)
     by_stage: dict[str, int] = defaultdict(int)
@@ -157,7 +159,10 @@ def latest_report_path(pattern: str, reports_dir: Path | None = None) -> Path | 
     root = reports_dir or cfg().reports_dir
     if not root.exists():
         return None
-    candidates = sorted(path for path in root.glob(pattern) if path.is_file())
+    candidates = sorted(
+        (path for path in root.glob(pattern) if path.is_file()),
+        key=lambda path: (path.stat().st_mtime, path.name),
+    )
     return candidates[-1] if candidates else None
 
 

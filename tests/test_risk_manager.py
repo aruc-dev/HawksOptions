@@ -229,6 +229,28 @@ class PreTradeRiskTests(unittest.TestCase):
 
         self.assertTrue(decision.accepted, decision.reasons)
 
+    def test_quote_freshness_requires_datetime_when_max_age_enabled(self):
+        cfg = {
+            **self.config,
+            "gates": {
+                **self.config["gates"],
+                "max_quote_age_seconds": 60,
+            },
+        }
+        order = _order()
+        for leg in order.legs:
+            leg.contract.meta["quote_timestamp"] = "2026-04-23T10:00:00+00:00"
+
+        decision = pre_trade_check(
+            order,
+            account=self.account,
+            config=cfg,
+            open_positions=[],
+            as_of=date(2026, 4, 23),
+        )
+
+        self.assertIn("quote_freshness_requires_datetime", decision.reasons)
+
     def test_datetime_as_of_supports_quote_freshness_and_earnings_blackout(self):
         cfg = {
             **self.config,

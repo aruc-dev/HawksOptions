@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 from core.models import OptionContract, StrategyOrder
@@ -26,7 +26,7 @@ def quote_freshness_reasons(
     reject_missing = bool(gates.get("reject_missing_quote_timestamp", max_age is not None))
     reject_lifecycle_stale = bool(gates.get("reject_stale_quote_fallback", max_age is not None))
     max_spread = _optional_positive_float(gates.get("max_bid_ask_spread_pct"))
-    as_dt = _as_datetime(as_of)
+    as_dt = _as_datetime(as_of) if isinstance(as_of, datetime) else None
 
     for leg in order.legs:
         contract = leg.contract
@@ -42,6 +42,9 @@ def quote_freshness_reasons(
         if timestamp is None:
             if reject_missing:
                 reasons.append("missing_quote_timestamp")
+            continue
+        if max_age is not None and as_dt is None:
+            reasons.append("quote_freshness_requires_datetime")
             continue
         age_seconds = (as_dt - timestamp).total_seconds()
         if age_seconds < -1:
@@ -60,12 +63,10 @@ def quote_timestamp(contract: OptionContract) -> datetime | None:
     return None
 
 
-def _as_datetime(value: date | datetime) -> datetime:
-    if isinstance(value, datetime):
-        if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
-    return datetime.combine(value, time(16, 0), tzinfo=timezone.utc)
+def _as_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _parse_datetime(value: Any) -> datetime | None:
