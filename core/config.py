@@ -14,21 +14,19 @@ LOCAL_CONFIG_PATH = BASE_DIR / "config" / "config.local.yaml"
 
 
 def resolve_config_path(path: Path | None = None) -> Path:
-    """Return the config file path to use.
+    """Return a complete config file path.
 
     Resolution order:
     1. *path* — if an explicit path is supplied it is returned as-is.
-    2. ``LOCAL_CONFIG_PATH`` — when it exists on disk.
-    3. ``CONFIG_PATH`` — the committed reference config.
+    2. ``CONFIG_PATH`` — the committed reference config.
 
     ``load_config()`` is preferred for runtime use because it deep-merges
     ``config.local.yaml`` over ``config.yaml`` instead of loading the local
-    file as a full replacement.
+    file as a full replacement. This helper intentionally does not return the
+    local overlay by default because that file can be partial.
     """
     if path is not None:
         return path
-    if LOCAL_CONFIG_PATH.is_file():
-        return LOCAL_CONFIG_PATH
     return CONFIG_PATH
 
 

@@ -3,6 +3,7 @@
   const POLL_MS = 15000;
   const STALE_RED_MS = 60000;
   let lastStateMs = 0;
+  let lastPollError = "";
 
   const $ = (id) => document.getElementById(id);
   const hasNumber = (n) => n !== null && n !== undefined && n !== "" && Number.isFinite(Number(n));
@@ -61,14 +62,21 @@
       const data = await res.json();
       render(data);
       lastStateMs = Date.now();
+      lastPollError = "";
     } catch (error) {
-      $("refresh-status").textContent = "fetch error: " + error.message;
+      lastPollError = "fetch error: " + error.message;
+      $("refresh-status").textContent = lastPollError;
       $("refresh-status").className = "text-rose-400";
     }
     updateRefreshTicker();
   }
 
   function updateRefreshTicker() {
+    if (lastPollError) {
+      $("refresh-status").textContent = lastPollError;
+      $("refresh-status").className = "text-rose-400";
+      return;
+    }
     if (!lastStateMs) return;
     const age = Date.now() - lastStateMs;
     const seconds = Math.floor(age / 1000);
@@ -90,7 +98,9 @@
     const health = state.health || {};
 
     $("mode-badge").textContent = String(state.mode || "?").toUpperCase();
-    const healthStatus = String(health.status || (state.alpaca_reachable ? "green" : "red")).toLowerCase();
+    const healthStatus = state.alpaca_reachable === false
+      ? "red"
+      : String(health.status || "green").toLowerCase();
     $("health-dot").className = "ho-status-dot " + statusColor(healthStatus);
 
     renderAccount(account, riskBudget, headroom, state, funnel);
@@ -180,9 +190,10 @@
 
   function renderHealth(health, alpacaReachable) {
     const status = String(health.status || "unknown").toLowerCase();
+    const effectiveStatus = alpacaReachable === false ? "red" : status;
     const el = $("health-status");
-    el.textContent = (status === "unknown" ? "?" : status.toUpperCase()) + (alpacaReachable ? "" : " • ALPACA");
-    el.dataset.status = status;
+    el.textContent = (effectiveStatus === "unknown" ? "?" : effectiveStatus.toUpperCase()) + (alpacaReachable ? "" : " • ALPACA");
+    el.dataset.status = effectiveStatus;
     $("health-summary").textContent = alpacaReachable ? "Alpaca reachable" : "Alpaca unreachable";
     const lines = (health.systemd && health.systemd.stdout_tail) || [];
     $("health-pre").textContent = lines.length ? lines.join("\n") : (health.systemd && health.systemd.error) || "No systemd snapshot lines.";

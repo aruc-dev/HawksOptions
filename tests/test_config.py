@@ -29,7 +29,7 @@ class TestResolveConfigPath(unittest.TestCase):
 
         self.assertEqual(result, base)
 
-    def test_default_returns_local_config_when_present(self):
+    def test_default_returns_committed_config_when_local_present(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             base = root / "config" / "config.yaml"
@@ -41,7 +41,7 @@ class TestResolveConfigPath(unittest.TestCase):
             with patch.object(cfg_mod, "CONFIG_PATH", base), patch.object(cfg_mod, "LOCAL_CONFIG_PATH", local):
                 result = cfg_mod.resolve_config_path()
 
-        self.assertEqual(result, local)
+        self.assertEqual(result, base)
 
 
 class TestLocalConfigOverlay(unittest.TestCase):
