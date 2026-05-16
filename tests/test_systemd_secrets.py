@@ -4,6 +4,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from typing import Optional
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,7 +71,7 @@ class SystemdSecretsTests(unittest.TestCase):
         os.chmod(bindir / "aws", 0o755)
         os.chmod(bindir / "jq", 0o755)
 
-    def _run_fetch_with_fake_aws(self, output_file: str, extra_env: dict[str, str] | None = None):
+    def _run_fetch_with_fake_aws(self, output_file: str, extra_env: Optional[dict[str, str]] = None):
         script = ROOT / "scripts" / "fetch_secrets.sh"
         with tempfile.TemporaryDirectory() as tmpdir:
             bindir = Path(tmpdir) / "bin"
