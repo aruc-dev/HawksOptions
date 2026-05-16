@@ -7,7 +7,7 @@ from core.close_executor import build_close_order_payload, close_order_plans
 from core.models import OptionContract, OrderLeg, PositionSnapshot
 
 
-def _position() -> PositionSnapshot:
+def _position(*, qty: int = 1) -> PositionSnapshot:
     short = OptionContract(
         "SPY260619P00500000",
         "SPY",
@@ -33,8 +33,8 @@ def _position() -> PositionSnapshot:
         strategy_name="vertical_spread",
         underlying="SPY",
         legs=[
-            OrderLeg(short, "sell_to_open"),
-            OrderLeg(long, "buy_to_open"),
+            OrderLeg(short, "sell_to_open", qty=qty),
+            OrderLeg(long, "buy_to_open", qty=qty),
         ],
         opened_at=datetime(2026, 4, 23, 10, 0, tzinfo=timezone.utc),
         entry_credit=20.0,
@@ -79,8 +79,9 @@ class CloseExecutorTests(unittest.TestCase):
 
     def test_close_order_plans_submit_only_when_enabled_and_not_dry_run(self):
         client = _Client()
+        position = _position()
         plans = close_order_plans(
-            [_position()],
+            [position],
             [{"strategy_id": "vertical_spread-SPY-20260423", "action": "take_profit"}],
             client=client,
             execute_enabled=True,
@@ -89,6 +90,57 @@ class CloseExecutorTests(unittest.TestCase):
 
         self.assertEqual(plans[0]["result"]["id"], "close-1")
         self.assertEqual(len(client.payloads), 1)
+        self.assertEqual(position.pending_close_order_id, "close-1")
+        self.assertEqual(position.pending_close_action, "take_profit")
+
+    def test_build_close_order_payload_normalizes_limit_by_position_quantity(self):
+        payload = build_close_order_payload(_position(qty=3))
+
+        self.assertEqual(payload["limit_price"], 0.2)
+
+    def test_close_order_plans_dedupe_duplicate_actions_by_priority(self):
+        client = _Client()
+        plans = close_order_plans(
+            [_position()],
+            [
+                {"strategy_id": "vertical_spread-SPY-20260423", "action": "time_exit"},
+                {"strategy_id": "vertical_spread-SPY-20260423", "action": "stop_loss"},
+            ],
+            client=client,
+            execute_enabled=True,
+            dry_run=False,
+        )
+
+        self.assertEqual(len(plans), 1)
+        self.assertEqual(plans[0]["action"], "stop_loss")
+        self.assertEqual(len(client.payloads), 1)
+
+    def test_close_order_plans_skip_positions_already_pending_close(self):
+        client = _Client()
+        position = _position()
+        position.pending_close_order_id = "close-pending"
+        plans = close_order_plans(
+            [position],
+            [{"strategy_id": "vertical_spread-SPY-20260423", "action": "take_profit"}],
+            client=client,
+            execute_enabled=True,
+            dry_run=False,
+        )
+
+        self.assertEqual(plans[0]["result"]["status"], "skipped_pending_close")
+        self.assertEqual(client.payloads, [])
+
+    def test_position_snapshot_persists_underlying_price_and_pending_close(self):
+        position = _position()
+        position.pending_close_order_id = "close-1"
+        position.pending_close_action = "take_profit"
+        position.pending_close_submitted_at = datetime(2026, 4, 23, 10, 5, tzinfo=timezone.utc)
+
+        loaded = PositionSnapshot.from_dict(position.as_dict())
+
+        self.assertEqual(loaded.legs[0].contract.underlying_price, 520.0)
+        self.assertEqual(loaded.pending_close_order_id, "close-1")
+        self.assertEqual(loaded.pending_close_action, "take_profit")
 
 
 if __name__ == "__main__":

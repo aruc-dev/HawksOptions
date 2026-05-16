@@ -162,6 +162,23 @@ class PreTradeRiskTests(unittest.TestCase):
         self.assertNotIn("iv_rank_too_low_for_short_premium", accepted.reasons)
         self.assertIn("iv_rank_too_low_for_short_premium", rejected.reasons)
 
+    def test_vix_scaling_fails_closed_without_market_context(self):
+        config = {
+            **self.config,
+            "gates": {
+                **self.config["gates"],
+                "vix_iv_rank_scaling": {
+                    "enabled": True,
+                    "low_vix_below": 15,
+                    "low_vix_min_iv_rank_for_short_premium": 50,
+                },
+            },
+        }
+
+        decision = pre_trade_check(_order(iv_rank=60.0), account=self.account, config=config, open_positions=[], as_of=date(2026, 4, 23))
+
+        self.assertIn("vix_unavailable_for_iv_rank_scaling", decision.reasons)
+
     def test_rejects_low_iv_rank_for_credit_butterfly_variant(self):
         order = _order(iv_rank=10.0)
         order.strategy_name = "butterfly"

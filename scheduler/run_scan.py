@@ -24,7 +24,7 @@ from core.models import OptionContract, StrategyContext, StrategyOrder
 from core.order_executor import execute_order, persist_open_order, position_from_order
 from core.quote_freshness import quote_timestamp
 from core.risk_manager import pre_trade_check
-from scheduler.common import build_context, configured_underlyings, current_positions, load_runtime
+from scheduler.common import build_context, configured_underlyings, current_positions, load_runtime, refresh_positions
 from strategies import build_enabled_strategies
 from strategies.earnings_calendar_scanner import scan_earnings_calendar_candidates, scan_volatility_crush_iron_condor_candidates
 from strategies.selection import build_candidate, rank_candidates
@@ -657,7 +657,7 @@ def scan_market(*, config: dict[str, Any], as_of: date | None = None, dry_run: b
     market_context_getter = getattr(client, "get_market_volatility_snapshot", None)
     if callable(market_context_getter):
         account = {**account, "market_context": market_context_getter(as_of=as_of)}
-    positions = current_positions(paths)
+    positions = refresh_positions(current_positions(paths), client=client, as_of=as_of)
     strategies = build_enabled_strategies(config)
     underlyings = configured_underlyings(config)
     config = {

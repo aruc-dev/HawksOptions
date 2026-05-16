@@ -19,7 +19,7 @@ def _parse_iso(value: str) -> datetime | None:
         return None
 
 
-def _float(value: Any, default: float = 0.0) -> float:
+def _float(value: Any, default: float | None = 0.0) -> float | None:
     try:
         return float(value)
     except (TypeError, ValueError):
@@ -120,7 +120,9 @@ def slippage_summary(rows: Iterable[dict[str, Any]], *, lookback_days: int = 30,
         ts = _parse_iso(str(row.get("timestamp", "")))
         if ts is None or ts < cutoff:
             continue
-        slippage = _float(row.get("leg_slippage_dollars"), default=0.0)
+        slippage = _float(row.get("leg_slippage_dollars"), default=None)
+        if slippage is None:
+            continue
         strategy = str(row.get("strategy", "unknown"))
         bucket = buckets[strategy]
         bucket["strategy"] = strategy

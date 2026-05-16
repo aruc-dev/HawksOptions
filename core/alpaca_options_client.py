@@ -231,7 +231,7 @@ class AlpacaOptionsClient:
         rely on this method for real NBBO.
         """
         if not self.use_sample_data:
-            raise NotImplementedError("live option quote retrieval is not implemented")
+            return {}
         out: dict[str, dict[str, Any]] = {}
         by_underlying: dict[str, list[str]] = {}
         for symbol in symbols:

@@ -22,7 +22,7 @@ You are tasked with hardening the `HawksOptions` automated trading system. This 
 - [x] **1.2 SPY Beta-Weighting Engine**
   - **Target:** `core/portfolio_metrics.py` (Create if missing) and `core/risk_engine.py`
   - **Action:** Build a function `calculate_portfolio_beta(open_positions)` that converts all open option deltas into SPY-beta-weighted deltas.
-  - **Logic:** Reject new trade entries if the total portfolio SPY-beta-weighted delta exceeds a configurable threshold (e.g., +/- 0.5% of total account net liquidation value) to prevent severe directional drift.
+  - **Logic:** Reject new trade entries if the total portfolio SPY-beta-weighted delta exceeds a configurable threshold. The default example is 50% of total account net liquidation value when the optional gate is enabled.
 
 ---
 

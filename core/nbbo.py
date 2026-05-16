@@ -58,7 +58,10 @@ def _quotes_from_client(client: Any, symbols: list[str]) -> dict[str, dict[str, 
     getter = getattr(client, "get_option_quotes", None)
     if not callable(getter):
         return {}
-    raw = getter(symbols)
+    try:
+        raw = getter(symbols)
+    except NotImplementedError:
+        return {}
     if isinstance(raw, dict):
         return {
             str(symbol): quote

@@ -42,6 +42,8 @@ def run_risk_check(*, config: dict | None = None, as_of: date | None = None, dry
         execute_enabled=execute_closes,
         dry_run=dry_run,
     )
+    if execute_closes and not dry_run and payload["close_orders"]:
+        save_positions(paths["positions"], positions)
     baseline = read_daily_baseline(paths["baseline"])
     if baseline is None or baseline.get("date") != as_of.isoformat():
         baseline = write_daily_baseline(paths["baseline"], client.get_account()["portfolio_value"], as_of=datetime.combine(as_of, time(13, 31), tzinfo=timezone.utc))

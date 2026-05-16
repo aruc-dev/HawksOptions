@@ -133,7 +133,7 @@ strategies:
     min_iv_realized_spread: 0.0
     min_tail_skew: 0.0
     max_atr_pct: 0.03
-    min_credit_to_width: 0.05
+    min_credit_to_width: 0.30
     min_net_credit: 5.0
     # Require gross credit to clear modeled entry + exit costs. The sample
     # replay showed low-credit condors were dominated by friction.

@@ -165,6 +165,9 @@ class PositionSnapshot:
     remaining_extrinsic_value: float = 0.0
     short_leg_itm: bool = False
     roll_count: int = 0
+    pending_close_order_id: str = ""
+    pending_close_action: str = ""
+    pending_close_submitted_at: datetime | None = None
 
     @property
     def days_to_expiration(self) -> int:
@@ -208,6 +211,7 @@ class PositionSnapshot:
                     "theta": leg.contract.theta,
                     "vega": leg.contract.vega,
                     "gamma": leg.contract.gamma,
+                    "underlying_price": leg.contract.underlying_price,
                     "mid_price": leg.contract.mid_price(),
                 }
                 for leg in self.legs
@@ -217,6 +221,12 @@ class PositionSnapshot:
             payload["next_earnings_date"] = self.next_earnings_date.isoformat()
         if self.ex_dividend_date is not None:
             payload["ex_dividend_date"] = self.ex_dividend_date.isoformat()
+        if self.pending_close_order_id:
+            payload["pending_close_order_id"] = self.pending_close_order_id
+        if self.pending_close_action:
+            payload["pending_close_action"] = self.pending_close_action
+        if self.pending_close_submitted_at is not None:
+            payload["pending_close_submitted_at"] = self.pending_close_submitted_at.isoformat(timespec="seconds")
         return payload
 
     @classmethod
@@ -235,6 +245,7 @@ class PositionSnapshot:
                 theta=item.get("theta"),
                 vega=item.get("vega"),
                 gamma=item.get("gamma"),
+                underlying_price=float(item.get("underlying_price", 0.0)),
             )
             legs.append(OrderLeg(contract=contract, side=str(item.get("side", "")), qty=int(item.get("qty", 1))))
         return cls(
@@ -256,6 +267,9 @@ class PositionSnapshot:
             remaining_extrinsic_value=float(payload.get("remaining_extrinsic_value", 0.0)),
             short_leg_itm=bool(payload.get("short_leg_itm", False)),
             roll_count=int(payload.get("roll_count", 0)),
+            pending_close_order_id=str(payload.get("pending_close_order_id", "")),
+            pending_close_action=str(payload.get("pending_close_action", "")),
+            pending_close_submitted_at=_to_datetime(payload.get("pending_close_submitted_at")),
         )
 
 

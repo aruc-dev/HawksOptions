@@ -71,6 +71,14 @@ class _QuoteClient:
         }
 
 
+class _LiveQuoteFallbackClient:
+    def get_option_quotes(self, symbols):
+        raise NotImplementedError("live option quote retrieval is not implemented")
+
+    def submit_order(self, payload):
+        return {"id": "live-1", "status": "accepted", "payload": payload}
+
+
 class OrderExecutorTests(unittest.TestCase):
     def test_build_multileg_payload(self):
         payload = build_order_payload(_order())
@@ -164,6 +172,15 @@ class OrderExecutorTests(unittest.TestCase):
         self.assertEqual(quality["legs"][0]["expected_price"], 1.3)
         self.assertEqual(quality["legs"][1]["expected_price"], 0.75)
         self.assertEqual(quality["expected_net_opening_credit"], 55.0)
+
+    def test_live_execution_falls_back_when_nbbo_provider_is_unimplemented(self):
+        order = _order()
+
+        result = execute_order(_LiveQuoteFallbackClient(), order, dry_run=False)
+
+        self.assertEqual(result["id"], "live-1")
+        self.assertEqual(result["nbbo_snapshot"]["legs"][0]["source"], "order_contract")
+        self.assertEqual(result["execution_quality"]["expected_net_opening_credit"], order.net_opening_credit)
 
     def test_trade_log_uses_nbbo_expected_prices(self):
         order = _order()

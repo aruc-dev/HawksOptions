@@ -17,11 +17,20 @@ CLOSE_ACTIONS = {
     "close_for_calendar_assignment",
 }
 
+ACTION_PRIORITY = {
+    "stop_loss": 0,
+    "close_before_earnings": 1,
+    "close_for_ex_div": 2,
+    "close_for_calendar_assignment": 3,
+    "take_profit": 4,
+    "time_exit": 5,
+}
+
 
 def build_close_order_payload(position: PositionSnapshot) -> dict[str, Any]:
     legs = [_closing_leg_payload(leg) for leg in position.legs]
     net_close_cashflow = sum(leg.closing_cashflow() for leg in position.legs)
-    limit_price = round(abs(net_close_cashflow) / 100.0, 2)
+    limit_price = round(abs(net_close_cashflow) / (100.0 * _position_unit_quantity(position)), 2)
     if len(legs) == 1:
         return {
             **legs[0],
@@ -50,12 +59,29 @@ def close_order_plans(
 ) -> list[dict[str, Any]]:
     positions_by_id = {position.strategy_id: position for position in positions}
     plans = []
-    for action in actions:
+    for action in _dedupe_close_actions(actions, positions_by_id):
         action_name = str(action.get("action", ""))
         strategy_id = str(action.get("strategy_id", ""))
         if action_name not in CLOSE_ACTIONS or strategy_id not in positions_by_id:
             continue
-        payload = build_close_order_payload(positions_by_id[strategy_id])
+        position = positions_by_id[strategy_id]
+        if position.pending_close_order_id:
+            plans.append(
+                {
+                    "strategy_id": strategy_id,
+                    "action": action_name,
+                    "dry_run": True,
+                    "execute_enabled": bool(execute_enabled),
+                    "payload": {},
+                    "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    "result": {
+                        "status": "skipped_pending_close",
+                        "order_id": position.pending_close_order_id,
+                    },
+                }
+            )
+            continue
+        payload = build_close_order_payload(position)
         plan = {
             "strategy_id": strategy_id,
             "action": action_name,
@@ -66,10 +92,44 @@ def close_order_plans(
         }
         if execute_enabled and not dry_run:
             plan["result"] = client.submit_order(payload)
+            _mark_pending_close(position, action_name, plan["result"])
         else:
             plan["result"] = {"status": "planned"}
         plans.append(plan)
     return plans
+
+
+def _dedupe_close_actions(
+    actions: Iterable[dict[str, Any]],
+    positions_by_id: dict[str, PositionSnapshot],
+) -> list[dict[str, Any]]:
+    selected: dict[str, dict[str, Any]] = {}
+    for action in actions:
+        action_name = str(action.get("action", ""))
+        strategy_id = str(action.get("strategy_id", ""))
+        if action_name not in CLOSE_ACTIONS or strategy_id not in positions_by_id:
+            continue
+        current = selected.get(strategy_id)
+        if current is None or ACTION_PRIORITY[action_name] < ACTION_PRIORITY[str(current.get("action", ""))]:
+            selected[strategy_id] = action
+    return list(selected.values())
+
+
+def _position_unit_quantity(position: PositionSnapshot) -> int:
+    quantities = [abs(int(leg.qty)) for leg in position.legs if int(leg.qty) != 0]
+    return max(quantities, default=1)
+
+
+def _mark_pending_close(position: PositionSnapshot, action_name: str, result: Any) -> None:
+    if not isinstance(result, dict):
+        return
+    status = str(result.get("status", "")).lower()
+    order_id = str(result.get("id") or result.get("order_id") or "")
+    if status not in {"accepted", "new", "pending_new", "submitted"} or not order_id:
+        return
+    position.pending_close_order_id = order_id
+    position.pending_close_action = action_name
+    position.pending_close_submitted_at = datetime.now(timezone.utc)
 
 
 def _closing_leg_payload(leg) -> dict[str, Any]:

@@ -145,9 +145,12 @@ def pre_trade_check(
     if days_to_earnings is not None and days_to_earnings <= int(gates.get("earnings_blackout_days_before", 5)):
         reasons.append("earnings_blackout")
 
-    short_premium_iv_rank = _short_premium_iv_rank_threshold(order, gates, account)
-    if order.net_opening_credit > 0 and order.iv_rank < short_premium_iv_rank:
-        reasons.append("iv_rank_too_low_for_short_premium")
+    if order.net_opening_credit > 0:
+        if _vix_scaling_requires_market_context(order, gates, account):
+            reasons.append("vix_unavailable_for_iv_rank_scaling")
+        short_premium_iv_rank = _short_premium_iv_rank_threshold(order, gates, account)
+        if order.iv_rank < short_premium_iv_rank:
+            reasons.append("iv_rank_too_low_for_short_premium")
     if order.net_opening_credit < 0 and order.iv_rank > float(gates.get("max_iv_rank_for_long_premium", 40)):
         reasons.append("iv_rank_too_high_for_long_premium")
 
@@ -216,6 +219,13 @@ def _short_premium_iv_rank_threshold(order: StrategyOrder, gates: dict[str, Any]
     if vix > float(scaling.get("high_vix_above", 25.0)):
         return float(scaling.get("high_vix_min_iv_rank_for_short_premium", 35.0))
     return base
+
+
+def _vix_scaling_requires_market_context(order: StrategyOrder, gates: dict[str, Any], account: dict[str, Any]) -> bool:
+    scaling = gates.get("vix_iv_rank_scaling") or {}
+    if not isinstance(scaling, dict) or not bool(scaling.get("enabled", False)):
+        return False
+    return _market_vix(order, account) is None
 
 
 def _market_vix(order: StrategyOrder, account: dict[str, Any]) -> float | None:
