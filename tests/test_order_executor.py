@@ -167,6 +167,23 @@ class OrderExecutorTests(unittest.TestCase):
         self.assertEqual(quality["order_duration_seconds"], 7.0)
         self.assertEqual(quality["legs"][0]["slippage_dollars"], 5.0)
         self.assertEqual(quality["legs"][1]["slippage_dollars"], 0.0)
+        self.assertIsNone(quality["actual_net_opening_credit"])
+        self.assertIsNone(quality["net_slippage_dollars"])
+
+    def test_execution_quality_order_level_net_requires_all_legs_filled(self):
+        order = _order()
+        response = {
+            "legs": [
+                {"symbol": "SPY260619P00500000", "filled_avg_price": 1.00, "filled_qty": 1},
+            ],
+        }
+
+        quality = execution_quality_summary(order, response=response)
+
+        self.assertIsNone(quality["actual_net_opening_credit"])
+        self.assertIsNone(quality["net_slippage_dollars"])
+        self.assertEqual(quality["legs"][0]["actual_cashflow"], 100.0)
+        self.assertIsNone(quality["legs"][1]["actual_cashflow"])
 
     def test_persist_open_order_writes_trade_log_and_positions(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -257,6 +257,45 @@ class StrategyTodoTests(unittest.TestCase):
         )
         self.assertLess(order_near_limit.metadata["selection"]["portfolio_greek_room_score"], 1.0)
 
+    def test_selection_greek_room_prefers_config_limits_over_account_limits(self):
+        config = deepcopy(load_config())
+        config["portfolio_greek_limits"] = {"delta": 1000.0}
+        contract = _contract()
+        order = StrategyOrder(
+            "cash_secured_put",
+            "config-limit",
+            "SPY",
+            [OrderLeg(contract, "sell_to_open")],
+            100.0,
+            20.0,
+            100.0,
+            0.5,
+            2.0,
+            None,
+            55.0,
+        )
+        context = replace(
+            _context(
+                config,
+                {
+                    "symbol": "SPY",
+                    "strategies_allowed": ["cash_secured_put"],
+                },
+            ),
+            account={
+                "equity": 100000.0,
+                "portfolio_value": 100000.0,
+                "cash": 100000.0,
+                "buying_power": 200000.0,
+                "portfolio_greeks": {"delta": 95.0},
+                "greek_limits": {"delta": 100.0},
+            },
+        )
+
+        score_order(order, context, config)
+
+        self.assertGreater(order.metadata["selection"]["portfolio_greek_room_score"], 0.5)
+
     def test_open_interest_context_computes_max_pain_profile(self):
         chain = [
             OptionContract("SPY260528C00095000", "SPY", "call", 95.0, date(2026, 5, 28), 1.0, 1.02, open_interest=100, volume=50, underlying_price=100.0),
@@ -274,6 +313,17 @@ class StrategyTodoTests(unittest.TestCase):
         self.assertEqual(context["max_pain_distance_pct"], 0.0)
         self.assertEqual(context["largest_oi"], 110)
         self.assertEqual(context["total_open_interest"], 320)
+
+    def test_max_pain_tie_breaks_near_underlying_not_lowest_strike(self):
+        chain = [
+            OptionContract("SPY260528C00100000", "SPY", "call", 100.0, date(2026, 5, 28), 1.0, 1.02, open_interest=1, volume=50, underlying_price=108.0),
+            OptionContract("SPY260528P00110000", "SPY", "put", 110.0, date(2026, 5, 28), 1.0, 1.02, open_interest=1, volume=50, underlying_price=108.0),
+        ]
+
+        context = open_interest_context(chain, underlying_price=108.0)
+
+        self.assertEqual(max_pain_strike(chain, underlying_price=108.0), 110.0)
+        self.assertEqual(context["max_pain_strike"], 110.0)
 
     def test_open_interest_context_ignores_zero_effective_oi(self):
         chain = [

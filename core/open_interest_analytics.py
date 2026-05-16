@@ -19,21 +19,44 @@ def open_interest_profile(chain: list[OptionContract]) -> dict[float, dict[str, 
     return dict(sorted(profile.items()))
 
 
-def max_pain_strike(chain: list[OptionContract]) -> float | None:
+def max_pain_strike(chain: list[OptionContract], *, underlying_price: float | None = None) -> float | None:
     profile = open_interest_profile(chain)
     if not profile or sum(bucket["total"] for bucket in profile.values()) <= 0:
         return None
+    strikes = list(profile)
+    call_prefix_count: list[int] = []
+    call_prefix_strike_oi: list[float] = []
+    put_suffix_count: list[int] = [0] * len(strikes)
+    put_suffix_strike_oi: list[float] = [0.0] * len(strikes)
+
+    running_count = 0
+    running_strike_oi = 0.0
+    for strike in strikes:
+        running_count += profile[strike]["call"]
+        running_strike_oi += strike * profile[strike]["call"]
+        call_prefix_count.append(running_count)
+        call_prefix_strike_oi.append(running_strike_oi)
+
+    running_count = 0
+    running_strike_oi = 0.0
+    for index in range(len(strikes) - 1, -1, -1):
+        strike = strikes[index]
+        running_count += profile[strike]["put"]
+        running_strike_oi += strike * profile[strike]["put"]
+        put_suffix_count[index] = running_count
+        put_suffix_strike_oi[index] = running_strike_oi
+
     payouts: dict[float, float] = {}
-    for settlement in profile:
-        total_payout = 0.0
-        for contract in chain:
-            oi = max(0, int(contract.open_interest))
-            if contract.option_type == "call":
-                total_payout += max(0.0, settlement - float(contract.strike)) * oi
-            elif contract.option_type == "put":
-                total_payout += max(0.0, float(contract.strike) - settlement) * oi
-        payouts[settlement] = total_payout
-    return min(payouts, key=lambda strike: (payouts[strike], abs(strike)))
+    for index, settlement in enumerate(strikes):
+        call_payout = 0.0
+        if index > 0:
+            call_payout = (settlement * call_prefix_count[index - 1]) - call_prefix_strike_oi[index - 1]
+        put_payout = 0.0
+        if index < len(strikes) - 1:
+            put_payout = put_suffix_strike_oi[index + 1] - (settlement * put_suffix_count[index + 1])
+        payouts[settlement] = call_payout + put_payout
+    reference = underlying_price if underlying_price is not None and underlying_price > 0 else strikes[len(strikes) // 2]
+    return min(payouts, key=lambda strike: (payouts[strike], abs(strike - reference), strike))
 
 
 def open_interest_context(chain: list[OptionContract], *, underlying_price: float) -> dict[str, Any]:
@@ -47,7 +70,7 @@ def open_interest_context(chain: list[OptionContract], *, underlying_price: floa
             "largest_oi": 0,
             "total_open_interest": 0,
         }
-    max_pain = max_pain_strike(chain)
+    max_pain = max_pain_strike(chain, underlying_price=underlying_price)
     largest_strike, largest_bucket = max(profile.items(), key=lambda item: (item[1]["total"], -abs(item[0] - underlying_price)))
     distance_pct = None
     if max_pain is not None and underlying_price > 0:

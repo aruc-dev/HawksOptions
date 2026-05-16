@@ -297,7 +297,7 @@ def _greek_safety_score(exposure: float, risk: float) -> float:
 
 
 def _portfolio_greek_room_score(context: StrategyContext, order_greeks: dict[str, float]) -> float:
-    limits = context.account.get("greek_limits") or context.config.get("portfolio_greek_limits")
+    limits = context.config.get("portfolio_greek_limits") or context.account.get("greek_limits")
     if not isinstance(limits, dict) or not limits:
         return 1.0
     current = context.account.get("portfolio_greeks", {})

@@ -23,7 +23,7 @@ def execution_quality_summary(
     leg_summaries = []
     expected_net = 0.0
     actual_net = 0.0
-    actual_known = False
+    complete_actual_fill = True
     partial_fill = False
     for index, leg in enumerate(order.legs, start=1):
         expected_price = leg.contract.mid_price()
@@ -32,12 +32,13 @@ def execution_quality_summary(
         filled_qty = _filled_qty(leg_response, leg.qty if _simulated_fill(response) else None)
         if filled_qty is not None and filled_qty < leg.qty:
             partial_fill = True
+        if actual_price is None or filled_qty is None or filled_qty < leg.qty:
+            complete_actual_fill = False
         expected_cashflow = leg.opening_cashflow()
         actual_cashflow = None
         slippage_per_share = None
         slippage_dollars = None
         if actual_price is not None:
-            actual_known = True
             sign = 1.0 if leg.side == "sell_to_open" else -1.0
             qty = filled_qty if filled_qty is not None else leg.qty
             actual_cashflow = round(sign * actual_price * 100.0 * qty, 2)
@@ -60,7 +61,7 @@ def execution_quality_summary(
                 "slippage_dollars": slippage_dollars,
             }
         )
-    actual_net_value = round(actual_net, 2) if actual_known else None
+    actual_net_value = round(actual_net, 2) if complete_actual_fill else None
     expected_net = round(expected_net, 2)
     return {
         "expected_net_opening_credit": expected_net,
