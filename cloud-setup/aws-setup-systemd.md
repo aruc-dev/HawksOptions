@@ -350,18 +350,13 @@ sudo cp "$TMPDIR"/*.service "$TMPDIR"/*.timer /etc/systemd/system/
 rm -rf "$TMPDIR"
 ```
 
-Ensure the secrets service runs as the same OS user as the trading jobs. This
-makes `/dev/shm/.hawksoptions.env` readable by the trading services while still
-keeping mode `0600`.
-
-```bash
-sudo install -d /etc/systemd/system/hawksoptions-secrets.service.d
-sudo tee /etc/systemd/system/hawksoptions-secrets.service.d/10-user.conf >/dev/null <<EOF
-[Service]
-User=$HO_USER
-Group=$HO_GROUP
-EOF
-```
+The bundled unit templates run the secrets service as the same OS user as the
+trading jobs. This makes `/dev/shm/.hawksoptions.env` readable by the trading
+services while still keeping mode `0600`. The `sed` command above adjusts
+`User=`, `Group=`, and project paths when deploying to a different account or
+directory. Existing installs that previously created the RAM file as `root` are
+handled by the secrets service `ExecStartPre`, which normalizes ownership and
+mode before the `ec2-user` loader runs.
 
 Add the RAM secret file as a required environment file for every trading job.
 This makes jobs fail closed if the secrets service has not written credentials.
@@ -398,6 +393,7 @@ sudo systemctl daemon-reload
 | Unit | Type | Purpose |
 |------|------|---------|
 | `hawksoptions-secrets.service` | oneshot | Fetches AWS Secrets Manager values into `/dev/shm/.hawksoptions.env` |
+| `hawksoptions-secrets.timer` | timer | Ensures RAM secrets exist every 30 minutes; existing RAM secrets are reused by default |
 | `hawksoptions-scan.service` | oneshot | Runs `scheduler/run_scan.py` |
 | `hawksoptions-scan.timer` | timer | Fires every 30 minutes |
 | `hawksoptions-risk-check.service` | oneshot | Refreshes positions, daily loss, Greeks snapshots, and risk actions |
@@ -425,17 +421,20 @@ drop-ins before enabling them.
 
 ## Step 10 - Start and Verify the Secrets Service
 
-Enable the service so it runs on every boot:
+Enable the service so it runs on every boot and the timer so it checks that RAM
+secrets exist every 30 minutes:
 
 ```bash
-sudo systemctl enable hawksoptions-secrets.service
+sudo systemctl enable hawksoptions-secrets.service hawksoptions-secrets.timer
 ```
 
 Start it now:
 
 ```bash
 sudo systemctl start hawksoptions-secrets.service
+sudo systemctl start hawksoptions-secrets.timer
 sudo systemctl status hawksoptions-secrets.service
+sudo systemctl status hawksoptions-secrets.timer
 ```
 
 Confirm the RAM secret file exists. This command prints key names only:
@@ -586,24 +585,35 @@ The intended startup chain is:
 network-online.target
         |
         v
-hawksoptions-secrets.service
+hawksoptions-secrets.service  <---  hawksoptions-secrets.timer
         |
         +--> /dev/shm/.hawksoptions.env
         |
-        +--> hawksoptions-scan.service
-        +--> hawksoptions-risk-check.service
-        +--> hawksoptions-risk-watch.service
-        +--> hawksoptions-roll-check.service
-        +--> hawksoptions-eod-report.service
+        +--> consumed by hawksoptions-scan.service
+        +--> consumed by hawksoptions-risk-check.service
+        +--> consumed by hawksoptions-risk-watch.service
+        +--> consumed by hawksoptions-roll-check.service
+        +--> consumed by hawksoptions-eod-report.service
 
 hawksoptions-dashboard.service
         |
         +--> /etc/hawksoptions-dash/env only
 ```
 
-Trading jobs use `Requires=hawksoptions-secrets.service` and the drop-in from
-Step 9 requires `/dev/shm/.hawksoptions.env` as an `EnvironmentFile`. If secrets
-are missing, trading jobs fail before Python starts.
+Trading jobs do not use `Requires=hawksoptions-secrets.service`; high-frequency jobs
+must not call AWS Secrets Manager before every run. They use `Wants=` and
+`After=` for `network-online.target` and `hawksoptions-secrets.service`, so boot
+or persistent timer runs pull prerequisites into the transaction without making
+the trading job directly require a fresh AWS fetch. By default the loader reuses
+an existing non-empty `/dev/shm/.hawksoptions.env` that contains the required
+paper keys and only calls AWS Secrets Manager when that RAM file is missing,
+empty, invalid, explicitly forced, or older than an opt-in max age. Set
+`HAWKSOPTIONS_SECRETS_FORCE_REFRESH=1` for a manual key-rotation refresh, or set
+`HAWKSOPTIONS_SECRETS_MAX_AGE_SECONDS` to a positive value if you explicitly want
+age-based refresh. `hawksoptions-secrets.service` uses `PassEnvironment=` for
+those two override variables. The drop-in from Step 9 requires
+`/dev/shm/.hawksoptions.env` as an `EnvironmentFile`. If secrets are missing,
+trading jobs fail before Python starts.
 
 The dashboard uses a separate environment file and is blocked from reading the
 trading RAM secret file.
@@ -660,21 +670,34 @@ set +a
 Re-fetch secrets:
 
 ```bash
+sudo systemctl set-environment HAWKSOPTIONS_SECRETS_FORCE_REFRESH=1
 sudo systemctl restart hawksoptions-secrets.service
+sudo systemctl unset-environment HAWKSOPTIONS_SECRETS_FORCE_REFRESH
 sudo systemctl status hawksoptions-secrets.service
 ```
 
 Temporarily stop all scheduled trading jobs:
 
 ```bash
-sudo systemctl stop 'hawksoptions-*.timer'
-sudo systemctl disable 'hawksoptions-*.timer'
+sudo systemctl stop \
+  hawksoptions-scan.timer \
+  hawksoptions-risk-check.timer \
+  hawksoptions-risk-watch.timer \
+  hawksoptions-roll-check.timer \
+  hawksoptions-eod-report.timer
+sudo systemctl disable \
+  hawksoptions-scan.timer \
+  hawksoptions-risk-check.timer \
+  hawksoptions-risk-watch.timer \
+  hawksoptions-roll-check.timer \
+  hawksoptions-eod-report.timer
 ```
 
 Re-enable timers:
 
 ```bash
 sudo systemctl enable --now \
+  hawksoptions-secrets.timer \
   hawksoptions-scan.timer \
   hawksoptions-risk-check.timer \
   hawksoptions-risk-watch.timer \
@@ -763,7 +786,9 @@ Steps:
 2. Restart secrets:
 
    ```bash
+   sudo systemctl set-environment HAWKSOPTIONS_SECRETS_FORCE_REFRESH=1
    sudo systemctl restart hawksoptions-secrets.service
+   sudo systemctl unset-environment HAWKSOPTIONS_SECRETS_FORCE_REFRESH
    ```
 
 3. Confirm live key names are present:
@@ -835,6 +860,7 @@ ls -l /dev/shm/.hawksoptions.env
 Check:
 
 - `hawksoptions-secrets.service` is enabled and succeeded.
+- `hawksoptions-secrets.timer` is enabled and active.
 - `/dev/shm/.hawksoptions.env` exists and is readable by `ec2-user`.
 - The `10-secrets.conf` drop-in exists for each trading service.
 
