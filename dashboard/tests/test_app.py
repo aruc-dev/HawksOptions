@@ -98,6 +98,16 @@ class DashboardAppTests(unittest.TestCase):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
         self.assertIn("HawksOptions", response.text)
+        expected_ids = [
+            "acct-portfolio",
+            "strategies-tbody",
+            "risk-budget-bar",
+            "candidate-counts",
+            "health-status",
+            "iv-rank-list",
+        ]
+        for element_id in expected_ids:
+            self.assertIn(f'id="{element_id}"', response.text)
 
     def test_cloudflare_mode_rejects_without_jwt(self):
         from dashboard.app import create_app

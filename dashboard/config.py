@@ -6,9 +6,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-import yaml
-
-from core.config import resolve_config_path
+from core.config import load_config, load_yaml, resolve_config_path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -19,13 +17,13 @@ VALID_AUTH_MODES = {AUTH_MODE_LOCAL, AUTH_MODE_CLOUDFLARE}
 
 class DashboardConfig:
     def __init__(self, config_path: Path | None = None) -> None:
+        self._explicit_config_path = config_path is not None
         self.config_path = resolve_config_path(config_path)
         self._cached: dict[str, Any] | None = None
 
     def _load(self) -> dict[str, Any]:
         if self._cached is None:
-            with open(self.config_path, "r", encoding="utf-8") as handle:
-                self._cached = yaml.safe_load(handle) or {}
+            self._cached = load_yaml(self.config_path) if self._explicit_config_path else load_config()
         return self._cached
 
     @property
