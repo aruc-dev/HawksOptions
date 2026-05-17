@@ -345,7 +345,16 @@ class AlpacaOptionsClient:
     def _get_live_market_volatility_snapshot(self, as_of: date | None = None) -> dict[str, Any]:
         as_of = as_of or date.today()
         symbol = str(self.config.get("market_data", {}).get("vix_symbol", "VIX")).strip() or "VIX"
-        client = self._get_stock_data_client()
+        try:
+            client = self._get_stock_data_client()
+        except Exception as exc:
+            return {
+                "vix": None,
+                "source": "alpaca_stock_latest_quote_error",
+                "symbol": symbol,
+                "reason": str(exc),
+                "as_of": as_of.isoformat(),
+            }
         _, request_class = _resolve_stock_data_classes()
         if client is None or request_class is None:
             return {
@@ -355,7 +364,16 @@ class AlpacaOptionsClient:
                 "as_of": as_of.isoformat(),
             }
         request = request_class(symbol_or_symbols=[symbol])
-        raw_quotes = client.get_stock_latest_quote(request)
+        try:
+            raw_quotes = client.get_stock_latest_quote(request)
+        except Exception as exc:
+            return {
+                "vix": None,
+                "source": "alpaca_stock_latest_quote_error",
+                "symbol": symbol,
+                "reason": str(exc),
+                "as_of": as_of.isoformat(),
+            }
         quotes = raw_quotes if isinstance(raw_quotes, dict) else getattr(raw_quotes, "data", {})
         quote = quotes.get(symbol) if isinstance(quotes, dict) else None
         bid = _quote_value(quote, "bid_price", "bp", "bid")

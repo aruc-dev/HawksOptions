@@ -8,10 +8,41 @@ from tempfile import TemporaryDirectory
 
 from core.config import load_config
 from core.models import OptionContract, StrategyContext
-from scheduler.run_scan import _symbol_scan_health, scan_market
+from scheduler.run_scan import _market_context_for_scan, _symbol_scan_health, scan_market
+
+
+class _VolatilityClient:
+    def __init__(self):
+        self.calls = 0
+
+    def get_market_volatility_snapshot(self, *, as_of):
+        self.calls += 1
+        raise RuntimeError("provider offline")
 
 
 class RunScanTests(unittest.TestCase):
+    def test_market_context_lookup_skipped_when_vix_scaling_disabled(self):
+        client = _VolatilityClient()
+        config = load_config()
+        config["gates"]["vix_iv_rank_scaling"]["enabled"] = False
+
+        context = _market_context_for_scan(config=config, client=client, as_of=date(2026, 4, 23))
+
+        self.assertEqual(context, {})
+        self.assertEqual(client.calls, 0)
+
+    def test_market_context_lookup_failure_returns_unavailable_snapshot_when_enabled(self):
+        client = _VolatilityClient()
+        config = load_config()
+        config["gates"]["vix_iv_rank_scaling"]["enabled"] = True
+
+        context = _market_context_for_scan(config=config, client=client, as_of=date(2026, 4, 23))
+
+        self.assertEqual(context["vix"], None)
+        self.assertEqual(context["source"], "market_volatility_snapshot_error")
+        self.assertEqual(context["as_of"], "2026-04-23")
+        self.assertEqual(client.calls, 1)
+
     def test_dry_run_finds_candidates(self):
         config = load_config()
         config["strategies"]["iron_condor"]["min_credit_to_roundtrip_cost"] = 0

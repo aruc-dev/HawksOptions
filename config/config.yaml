@@ -53,6 +53,10 @@ underlyings:
 
 market_data:
   use_sample_data: true
+  # Symbol used for the optional VIX-aware IV-rank scaling gate when
+  # sample data is disabled. Override if your data provider uses a
+  # different tradable/proxy symbol for VIX quotes.
+  vix_symbol: VIX
   risk_free_rate: 0.045
   default_dividend_yield: 0.0
 

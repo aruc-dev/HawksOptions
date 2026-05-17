@@ -45,6 +45,15 @@ class _StockDataClient:
         }
 
 
+class _FailingStockDataClient:
+    def __init__(self, key: str, secret: str):
+        self.key = key
+        self.secret = secret
+
+    def get_stock_latest_quote(self, request):
+        raise TimeoutError("provider timeout")
+
+
 class AlpacaOptionsClientTests(unittest.TestCase):
     def test_sample_chain_contains_options(self):
         client = AlpacaOptionsClient(load_config(), use_sample_data=True)
@@ -87,6 +96,21 @@ class AlpacaOptionsClientTests(unittest.TestCase):
 
         self.assertEqual(snapshot["vix"], 20.0)
         self.assertEqual(snapshot["source"], "alpaca_stock_latest_quote")
+        self.assertEqual(snapshot["symbol"], "VIX")
+
+    def test_live_market_volatility_snapshot_returns_unavailable_on_provider_error(self):
+        config = load_config()
+        config["market_data"]["vix_symbol"] = "VIX"
+        with (
+            patch.dict("os.environ", {"ALPACA_OPTIONS_PAPER_API_KEY": "key", "ALPACA_OPTIONS_PAPER_SECRET_KEY": "secret"}),
+            patch.object(client_module, "StockHistoricalDataClient", _FailingStockDataClient),
+            patch.object(client_module, "StockLatestQuoteRequest", _LatestQuoteRequest),
+        ):
+            client = AlpacaOptionsClient(config, use_sample_data=False)
+            snapshot = client.get_market_volatility_snapshot(as_of=date(2026, 4, 23))
+
+        self.assertEqual(snapshot["vix"], None)
+        self.assertEqual(snapshot["source"], "alpaca_stock_latest_quote_error")
         self.assertEqual(snapshot["symbol"], "VIX")
 
     def test_occ_symbols_round_trip(self):

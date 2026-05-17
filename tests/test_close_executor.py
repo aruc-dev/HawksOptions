@@ -45,6 +45,55 @@ def _position(*, qty: int = 1) -> PositionSnapshot:
     )
 
 
+def _butterfly_position() -> PositionSnapshot:
+    low = OptionContract(
+        "SPY260619P00495000",
+        "SPY",
+        "put",
+        495.0,
+        date(2026, 6, 19),
+        0.15,
+        0.25,
+        underlying_price=520.0,
+    )
+    middle = OptionContract(
+        "SPY260619P00500000",
+        "SPY",
+        "put",
+        500.0,
+        date(2026, 6, 19),
+        0.45,
+        0.55,
+        underlying_price=520.0,
+    )
+    high = OptionContract(
+        "SPY260619P00505000",
+        "SPY",
+        "put",
+        505.0,
+        date(2026, 6, 19),
+        0.95,
+        1.05,
+        underlying_price=520.0,
+    )
+    return PositionSnapshot(
+        strategy_id="butterfly-SPY-20260423",
+        strategy_name="butterfly",
+        underlying="SPY",
+        legs=[
+            OrderLeg(low, "buy_to_open", qty=1),
+            OrderLeg(middle, "sell_to_open", qty=2),
+            OrderLeg(high, "buy_to_open", qty=1),
+        ],
+        opened_at=datetime(2026, 4, 23, 10, 0, tzinfo=timezone.utc),
+        entry_credit=-20.0,
+        max_loss=20.0,
+        profit_take_pct=0.5,
+        loss_stop_multiple=1.5,
+        roll_threshold_delta=None,
+    )
+
+
 class _Client:
     def __init__(self, *, submit_status: str = "accepted"):
         self.payloads = []
@@ -105,6 +154,27 @@ class CloseExecutorTests(unittest.TestCase):
         payload = build_close_order_payload(_position(qty=3))
 
         self.assertEqual(payload["limit_price"], 0.2)
+
+    def test_build_close_order_payload_uses_gcd_for_ratio_spread_unit(self):
+        payload = build_close_order_payload(_butterfly_position())
+
+        self.assertEqual(payload["limit_price"], 0.2)
+        self.assertEqual([leg["ratio_qty"] for leg in payload["legs"]], [1, 2, 1])
+
+    def test_close_order_plans_tracks_immediate_partial_fill_as_pending(self):
+        client = _Client(submit_status="partially_filled")
+        position = _position()
+        plans = close_order_plans(
+            [position],
+            [{"strategy_id": "vertical_spread-SPY-20260423", "action": "take_profit"}],
+            client=client,
+            execute_enabled=True,
+            dry_run=False,
+        )
+
+        self.assertEqual(plans[0]["result"]["status"], "partially_filled")
+        self.assertEqual(position.pending_close_order_id, "close-1")
+        self.assertEqual(position.pending_close_action, "take_profit")
 
     def test_close_order_plans_dedupe_duplicate_actions_by_priority(self):
         client = _Client()

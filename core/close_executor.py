@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from functools import reduce
+from math import gcd
 from typing import Any, Iterable
 
 from core.models import PositionSnapshot
@@ -27,6 +29,15 @@ ACTION_PRIORITY = {
 }
 
 PENDING_CLOSE_TTL = timedelta(minutes=15)
+ACTIVE_PENDING_CLOSE_STATUSES = {
+    "accepted",
+    "new",
+    "pending_new",
+    "submitted",
+    "partially_filled",
+    "pending_cancel",
+    "pending_replace",
+}
 
 
 def build_close_order_payload(position: PositionSnapshot) -> dict[str, Any]:
@@ -120,7 +131,9 @@ def _dedupe_close_actions(
 
 def _position_unit_quantity(position: PositionSnapshot) -> int:
     quantities = [abs(int(leg.qty)) for leg in position.legs if int(leg.qty) != 0]
-    return max(quantities, default=1)
+    if not quantities:
+        return 1
+    return max(1, reduce(gcd, quantities))
 
 
 def _mark_pending_close(position: PositionSnapshot, action_name: str, result: Any) -> None:
@@ -131,7 +144,7 @@ def _mark_pending_close(position: PositionSnapshot, action_name: str, result: An
     if status == "filled" and order_id:
         _mark_closed(position, order_id=order_id, action_name=action_name)
         return
-    if status not in {"accepted", "new", "pending_new", "submitted"} or not order_id:
+    if status not in ACTIVE_PENDING_CLOSE_STATUSES or not order_id:
         return
     position.pending_close_order_id = order_id
     position.pending_close_action = action_name
@@ -150,7 +163,7 @@ def _pending_close_state(position: PositionSnapshot, client: Any) -> str:
     if status in {"canceled", "cancelled", "rejected", "expired"}:
         _clear_pending_close(position)
         return "inactive"
-    if status in {"accepted", "new", "pending_new", "submitted", "partially_filled", "pending_cancel", "pending_replace"}:
+    if status in ACTIVE_PENDING_CLOSE_STATUSES:
         return "active"
     if _pending_close_is_recent(position):
         return "active"
