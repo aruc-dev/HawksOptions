@@ -323,6 +323,40 @@ SSH tunnel or localhost-only access.
 
 ---
 
+## Step 8A - Preserve `/dev/shm` RAM Secrets
+
+HawksOptions writes trading credentials to `/dev/shm/.hawksoptions.env` with
+mode `0600` and `ec2-user:ec2-user` ownership. On Amazon Linux hosts,
+`systemd-logind` may default `RemoveIPC` to `yes`, which can remove user-owned
+IPC objects in `/dev/shm` after `ec2-user` sessions end. If that happens, timer
+jobs fail before Python starts, and the dashboard can fail with
+`status=226/NAMESPACE` because its `InaccessiblePaths=/dev/shm/.hawksoptions.env`
+entry points at a missing path.
+
+Set `RemoveIPC=no` before enabling the timers:
+
+```bash
+sudo install -d -m 0755 /etc/systemd/logind.conf.d
+sudo tee /etc/systemd/logind.conf.d/99-hawksoptions-ram-secrets.conf >/dev/null <<'EOF'
+[Login]
+RemoveIPC=no
+EOF
+sudo systemctl restart systemd-logind.service
+systemd-analyze cat-config systemd/logind.conf | grep 'RemoveIPC='
+```
+
+The effective value must be:
+
+```text
+RemoveIPC=no
+```
+
+This does not expose the secret file. The file remains readable only by
+`ec2-user`, and the dashboard unit still blocks access to the trading RAM secret
+with `InaccessiblePaths=`.
+
+---
+
 ## Step 9 - Install systemd Units and Timers
 
 The unit templates use `/home/ec2-user/HawksOptions` and `ec2-user` by default.
@@ -863,6 +897,39 @@ Check:
 - `hawksoptions-secrets.timer` is enabled and active.
 - `/dev/shm/.hawksoptions.env` exists and is readable by `ec2-user`.
 - The `10-secrets.conf` drop-in exists for each trading service.
+- `systemd-logind` has effective `RemoveIPC=no` so `/dev/shm/.hawksoptions.env`
+  is not removed when `ec2-user` sessions end.
+
+```bash
+systemd-analyze cat-config systemd/logind.conf | grep 'RemoveIPC='
+sudo systemctl restart hawksoptions-secrets.service
+ls -l /dev/shm/.hawksoptions.env
+```
+
+### Dashboard fails with `status=226/NAMESPACE`
+
+```bash
+systemctl status hawksoptions-dashboard.service --no-pager -l
+journalctl -u hawksoptions-dashboard.service -n 100 --no-pager
+ls -l /dev/shm/.hawksoptions.env
+```
+
+If the log shows a namespace setup failure for
+`/run/systemd/unit-root/dev/shm/.hawksoptions.env`, the dashboard is starting
+while the RAM secret path is missing. Check:
+
+- `hawksoptions-secrets.service` can recreate `/dev/shm/.hawksoptions.env`.
+- `RemoveIPC=no` is effective in `systemd-logind`.
+- `sudo systemctl restart systemd-logind.service` was run after adding the
+  drop-in.
+
+After fixing the host setting:
+
+```bash
+sudo systemctl restart hawksoptions-secrets.service
+sudo systemctl restart hawksoptions-dashboard.service
+curl -s http://127.0.0.1:8080/healthz
+```
 
 ### Jobs use sample data instead of Alpaca
 
