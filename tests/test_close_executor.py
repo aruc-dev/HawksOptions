@@ -143,7 +143,18 @@ class CloseExecutorTests(unittest.TestCase):
         self.assertEqual(payload["order_class"], "mleg")
         self.assertEqual(payload["legs"][0]["side"], "buy")
         self.assertEqual(payload["legs"][1]["side"], "sell")
+        self.assertNotIn("qty", payload["legs"][0])
+        self.assertNotIn("qty", payload["legs"][1])
         self.assertEqual(payload["limit_price"], 0.2)
+
+    def test_build_close_order_payload_keeps_qty_for_single_leg_close(self):
+        position = _position()
+        position.legs = position.legs[:1]
+        payload = build_close_order_payload(position)
+
+        self.assertEqual(payload["symbol"], "SPY260619P00500000")
+        self.assertEqual(payload["qty"], 1)
+        self.assertEqual(payload["ratio_qty"], 1)
 
     def test_close_order_plans_do_not_submit_when_disabled(self):
         client = _Client()
@@ -367,6 +378,14 @@ class CloseExecutorTests(unittest.TestCase):
     def test_close_order_plans_mark_immediate_filled_submit_as_closed(self):
         client = _Client(submit_status="filled")
         position = _position()
+        client.submit_order = lambda payload: {
+            "id": "close-1",
+            "status": "filled",
+            "legs": [
+                {"symbol": "SPY260619P00500000", "filled_avg_price": 0.5},
+                {"symbol": "SPY260619P00499000", "filled_avg_price": 0.4},
+            ],
+        }
 
         plans = close_order_plans(
             [position],
@@ -381,7 +400,7 @@ class CloseExecutorTests(unittest.TestCase):
         self.assertEqual(position.close_order_id, "close-1")
         self.assertEqual(position.pending_close_order_id, "")
 
-    def test_close_order_plans_reconciles_pending_close_without_new_action(self):
+    def test_close_order_plans_keeps_status_only_filled_close_pending(self):
         client = _Client()
         client.statuses["close-pending"] = "filled"
         position = _position()
@@ -397,9 +416,27 @@ class CloseExecutorTests(unittest.TestCase):
             dry_run=False,
         )
 
-        self.assertEqual(plans[0]["result"]["status"], "reconciled_closed")
-        self.assertIsNotNone(position.closed_at)
+        self.assertEqual(plans, [])
+        self.assertIsNone(position.closed_at)
+        self.assertEqual(position.pending_close_order_id, "close-pending")
         self.assertEqual(client.payloads, [])
+
+    def test_close_order_plans_keeps_immediate_status_only_fill_pending(self):
+        client = _Client(submit_status="filled")
+        position = _position()
+
+        plans = close_order_plans(
+            [position],
+            [{"strategy_id": "vertical_spread-SPY-20260423", "action": "take_profit"}],
+            client=client,
+            execute_enabled=True,
+            dry_run=False,
+        )
+
+        self.assertEqual(plans[0]["result"]["status"], "filled")
+        self.assertIsNone(position.closed_at)
+        self.assertEqual(position.pending_close_order_id, "close-1")
+        self.assertEqual(position.pending_close_action, "take_profit")
 
     def test_position_snapshot_persists_underlying_price_and_pending_close(self):
         position = _position()
@@ -483,7 +520,7 @@ class CloseExecutorTests(unittest.TestCase):
         self.assertEqual(rows[1]["exit_price"], "0.4")
         self.assertEqual(rows[0]["pnl_pct"], "50.0")
 
-    def test_mark_strategy_closed_leaves_exit_blank_without_broker_fill_prices(self):
+    def test_mark_strategy_closed_skips_without_broker_fill_prices(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "trades.csv"
             append_trade_rows(
@@ -516,9 +553,10 @@ class CloseExecutorTests(unittest.TestCase):
             )
             rows = read_trade_rows(path)
 
-        self.assertEqual(updated, 1)
+        self.assertEqual(updated, 0)
         self.assertEqual(rows[0]["order_id"], "open-1")
-        self.assertEqual(rows[0]["close_order_id"], "close-1")
+        self.assertEqual(rows[0]["status"], "open")
+        self.assertEqual(rows[0]["close_order_id"], "")
         self.assertEqual(rows[0]["exit_price"], "")
         self.assertEqual(rows[0]["pnl_pct"], "")
 

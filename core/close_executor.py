@@ -47,7 +47,7 @@ ACTIVE_PENDING_CLOSE_STATUSES = {
 
 
 def build_close_order_payload(position: PositionSnapshot) -> dict[str, Any]:
-    legs = [_closing_leg_payload(leg) for leg in position.legs]
+    legs = [_closing_leg_payload(leg, include_qty=len(position.legs) == 1) for leg in position.legs]
     net_close_cashflow = sum(leg.closing_cashflow() for leg in position.legs)
     limit_price = round(abs(net_close_cashflow) / (100.0 * _position_unit_quantity(position)), 2)
     if len(legs) == 1:
@@ -185,7 +185,10 @@ def _mark_pending_close(position: PositionSnapshot, action_name: str, result: An
     status = str(result.get("status", "")).lower()
     order_id = str(result.get("id") or result.get("order_id") or "")
     if status == "filled" and order_id:
-        _mark_closed(position, order_id=order_id, action_name=action_name, result=result)
+        if not _mark_closed(position, order_id=order_id, action_name=action_name, result=result):
+            position.pending_close_order_id = order_id
+            position.pending_close_action = action_name
+            position.pending_close_submitted_at = datetime.now(timezone.utc)
         return
     if status not in ACTIVE_PENDING_CLOSE_STATUSES or not order_id:
         return
@@ -199,12 +202,13 @@ def _pending_close_state(position: PositionSnapshot, client: Any) -> str:
         return "inactive"
     status, result = _pending_close_status(position.pending_close_order_id, client)
     if status == "filled":
-        _mark_closed(
+        if not _mark_closed(
             position,
             order_id=position.pending_close_order_id,
             action_name=position.pending_close_action,
             result=result,
-        )
+        ):
+            return "active"
         return "closed"
     if status == "__lookup_failed__":
         return "active"
@@ -262,14 +266,17 @@ def _clear_pending_close(position: PositionSnapshot) -> None:
     position.pending_close_submitted_at = None
 
 
-def _mark_closed(position: PositionSnapshot, *, order_id: str, action_name: str, result: Any = None) -> None:
+def _mark_closed(position: PositionSnapshot, *, order_id: str, action_name: str, result: Any = None) -> bool:
+    close_fill_prices = _close_fill_prices(result)
+    expected_symbols = {leg.contract.contract_symbol for leg in position.legs}
+    if not expected_symbols.issubset(close_fill_prices):
+        return False
     position.closed_at = datetime.now(timezone.utc)
     position.close_order_id = order_id
     position.close_action = action_name
-    close_fill_prices = _close_fill_prices(result)
-    if close_fill_prices:
-        position.close_fill_prices = close_fill_prices
+    position.close_fill_prices = close_fill_prices
     _clear_pending_close(position)
+    return True
 
 
 def _close_fill_prices(result: Any) -> dict[str, float]:
@@ -291,13 +298,15 @@ def _close_fill_prices(result: Any) -> dict[str, float]:
     return out
 
 
-def _closing_leg_payload(leg) -> dict[str, Any]:
-    return {
+def _closing_leg_payload(leg, *, include_qty: bool) -> dict[str, Any]:
+    payload = {
         "symbol": leg.contract.contract_symbol,
-        "qty": leg.qty,
         "ratio_qty": leg.qty,
         "side": _closing_side(leg.side),
     }
+    if include_qty:
+        payload["qty"] = leg.qty
+    return payload
 
 
 def _closing_side(open_side: str) -> str:

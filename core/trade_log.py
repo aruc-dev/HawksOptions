@@ -92,6 +92,9 @@ def mark_strategy_closed(
     """
     if not path.exists():
         return 0
+    expected_symbols = {leg.contract.contract_symbol for leg in position.legs}
+    if not expected_symbols.issubset(position.close_fill_prices):
+        return 0
     closed_at = closed_at or position.closed_at or datetime.now(timezone.utc)
     if closed_at.tzinfo is None:
         closed_at = closed_at.replace(tzinfo=timezone.utc)
