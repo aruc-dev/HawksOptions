@@ -26,6 +26,49 @@ class DashboardPnlTests(unittest.TestCase):
         headroom = pnl.daily_loss_headroom(baseline, 9600.0, 0.05)
         self.assertEqual(headroom["status"], "critical")
 
+    def test_slippage_summary_groups_by_strategy(self):
+        now = datetime(2026, 4, 23, tzinfo=timezone.utc)
+        rows = [
+            {"timestamp": "2026-04-22T12:00:00+00:00", "strategy": "iron_condor", "leg_slippage_dollars": "2.50"},
+            {"timestamp": "2026-04-22T12:00:00+00:00", "strategy": "iron_condor", "leg_slippage_dollars": "1.50"},
+            {"timestamp": "2026-04-22T12:00:00+00:00", "strategy": "vertical_spread", "leg_slippage_dollars": "1.00"},
+        ]
+
+        summary = pnl.slippage_summary(rows, lookback_days=7, now_utc=now)
+
+        self.assertEqual(summary[0]["strategy"], "iron_condor")
+        self.assertEqual(summary[0]["total_slippage_dollars"], 4.0)
+        self.assertEqual(summary[0]["average_slippage_dollars"], 2.0)
+
+    def test_slippage_summary_skips_unknown_fill_slippage(self):
+        now = datetime(2026, 4, 23, tzinfo=timezone.utc)
+        rows = [
+            {"timestamp": "2026-04-22T12:00:00+00:00", "strategy": "iron_condor", "leg_slippage_dollars": "2.50"},
+            {"timestamp": "2026-04-22T12:00:00+00:00", "strategy": "iron_condor", "leg_slippage_dollars": ""},
+            {"timestamp": "2026-04-22T12:00:00+00:00", "strategy": "iron_condor", "leg_slippage_dollars": "not-a-number"},
+        ]
+
+        summary = pnl.slippage_summary(rows, lookback_days=7, now_utc=now)
+
+        self.assertEqual(summary[0]["leg_count"], 1)
+        self.assertEqual(summary[0]["average_slippage_dollars"], 2.5)
+
+    def test_slippage_summary_uses_entry_timestamp_for_closed_rows(self):
+        now = datetime(2026, 4, 23, tzinfo=timezone.utc)
+        rows = [
+            {
+                "timestamp": "2026-03-01T12:00:00+00:00",
+                "close_timestamp": "2026-04-22T12:00:00+00:00",
+                "status": "closed",
+                "strategy": "iron_condor",
+                "leg_slippage_dollars": "2.50",
+            },
+        ]
+
+        summary = pnl.slippage_summary(rows, lookback_days=7, now_utc=now)
+
+        self.assertEqual(summary, [])
+
 
 if __name__ == "__main__":
     unittest.main()

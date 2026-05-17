@@ -6,6 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from core.models import OptionContract, OrderLeg, PositionSnapshot, StrategyOrder
+from core.portfolio_beta import aggregate_spy_beta_delta, order_spy_beta_delta
 from core.risk_manager import (
     continuous_risk_checks,
     identify_elevated_positions,
@@ -92,6 +93,32 @@ class PreTradeRiskTests(unittest.TestCase):
         decision = pre_trade_check(_order(), account=self.account, config=self.config, open_positions=[], as_of=date(2026, 4, 23))
         self.assertTrue(decision.accepted)
 
+    def test_rejects_projected_spy_beta_delta_ceiling(self):
+        config = {
+            **self.config,
+            "portfolio_beta_limits": {
+                "enabled": True,
+                "max_abs_spy_beta_delta_pct": 0.05,
+                "symbol_betas": {"SPY": 1.0},
+            },
+        }
+
+        decision = pre_trade_check(_order(), account=self.account, config=config, open_positions=[], as_of=date(2026, 4, 23))
+
+        self.assertIn("portfolio_spy_beta_delta_limit_exceeded", decision.reasons)
+
+    def test_spy_beta_delta_uses_configured_symbol_beta(self):
+        config = {"portfolio_beta_limits": {"symbol_betas": {"SPY": 0.5}}}
+        order = _order()
+
+        self.assertEqual(order_spy_beta_delta(order, config), 520.0)
+        self.assertEqual(aggregate_spy_beta_delta([], config), 0.0)
+
+    def test_spy_beta_delta_honors_negative_configured_symbol_beta(self):
+        config = {"portfolio_beta_limits": {"symbol_betas": {"SPY": -0.5}}}
+
+        self.assertEqual(order_spy_beta_delta(_order(), config), -520.0)
+
     def test_rejects_earnings_blackout(self):
         order = _order()
         order.next_earnings_date = date(2026, 4, 25)
@@ -100,6 +127,120 @@ class PreTradeRiskTests(unittest.TestCase):
 
     def test_rejects_low_iv_rank_for_short_premium(self):
         decision = pre_trade_check(_order(iv_rank=10.0), account=self.account, config=self.config, open_positions=[], as_of=date(2026, 4, 23))
+        self.assertIn("iv_rank_too_low_for_short_premium", decision.reasons)
+
+    def test_unscaled_iv_rank_minimum_accepts_equal_threshold(self):
+        decision = pre_trade_check(_order(iv_rank=30.0), account=self.account, config=self.config, open_positions=[], as_of=date(2026, 4, 23))
+
+        self.assertNotIn("iv_rank_too_low_for_short_premium", decision.reasons)
+
+    def test_vix_scaling_raises_short_premium_iv_threshold_when_vix_is_low(self):
+        config = {
+            **self.config,
+            "gates": {
+                **self.config["gates"],
+                "vix_iv_rank_scaling": {
+                    "enabled": True,
+                    "low_vix_below": 15,
+                    "low_vix_min_iv_rank_for_short_premium": 50,
+                },
+            },
+        }
+        account = {**self.account, "market_context": {"vix": 12.0}}
+
+        decision = pre_trade_check(_order(iv_rank=45.0), account=account, config=config, open_positions=[], as_of=date(2026, 4, 23))
+
+        self.assertIn("iv_rank_too_low_for_short_premium", decision.reasons)
+
+    def test_vix_scaling_rejects_iv_rank_equal_to_scaled_threshold(self):
+        config = {
+            **self.config,
+            "gates": {
+                **self.config["gates"],
+                "vix_iv_rank_scaling": {
+                    "enabled": True,
+                    "low_vix_below": 15,
+                    "low_vix_min_iv_rank_for_short_premium": 50,
+                },
+            },
+        }
+        account = {**self.account, "market_context": {"vix": 12.0}}
+
+        decision = pre_trade_check(_order(iv_rank=50.0), account=account, config=config, open_positions=[], as_of=date(2026, 4, 23))
+
+        self.assertIn("iv_rank_too_low_for_short_premium", decision.reasons)
+
+    def test_vix_scaling_uses_high_vix_threshold_when_vix_is_elevated(self):
+        config = {
+            **self.config,
+            "gates": {
+                **self.config["gates"],
+                "vix_iv_rank_scaling": {
+                    "enabled": True,
+                    "high_vix_above": 25,
+                    "high_vix_min_iv_rank_for_short_premium": 35,
+                },
+            },
+        }
+        account = {**self.account, "market_context": {"vix": 30.0}}
+
+        accepted = pre_trade_check(_order(iv_rank=36.0), account=account, config=config, open_positions=[], as_of=date(2026, 4, 23))
+        rejected = pre_trade_check(_order(iv_rank=34.0), account=account, config=config, open_positions=[], as_of=date(2026, 4, 23))
+
+        self.assertNotIn("iv_rank_too_low_for_short_premium", accepted.reasons)
+        self.assertIn("iv_rank_too_low_for_short_premium", rejected.reasons)
+
+    def test_vix_scaling_fails_closed_without_market_context(self):
+        config = {
+            **self.config,
+            "gates": {
+                **self.config["gates"],
+                "vix_iv_rank_scaling": {
+                    "enabled": True,
+                    "low_vix_below": 15,
+                    "low_vix_min_iv_rank_for_short_premium": 50,
+                },
+            },
+        }
+
+        decision = pre_trade_check(_order(iv_rank=60.0), account=self.account, config=config, open_positions=[], as_of=date(2026, 4, 23))
+
+        self.assertIn("vix_unavailable_for_iv_rank_scaling", decision.reasons)
+
+    def test_vix_scaling_fails_closed_for_proxy_without_proxy_thresholds(self):
+        config = {
+            **self.config,
+            "gates": {
+                **self.config["gates"],
+                "vix_iv_rank_scaling": {
+                    "enabled": True,
+                    "low_vix_below": 15,
+                    "high_vix_above": 25,
+                },
+            },
+        }
+        account = {**self.account, "market_context": {"vix": 21.0, "vix_scale": "proxy"}}
+
+        decision = pre_trade_check(_order(iv_rank=60.0), account=account, config=config, open_positions=[], as_of=date(2026, 4, 23))
+
+        self.assertIn("vix_unavailable_for_iv_rank_scaling", decision.reasons)
+
+    def test_vix_scaling_uses_proxy_thresholds_for_proxy_context(self):
+        config = {
+            **self.config,
+            "gates": {
+                **self.config["gates"],
+                "vix_iv_rank_scaling": {
+                    "enabled": True,
+                    "proxy_low_below": 20,
+                    "low_vix_min_iv_rank_for_short_premium": 50,
+                },
+            },
+        }
+        account = {**self.account, "market_context": {"vix": 19.0, "vix_scale": "proxy"}}
+
+        decision = pre_trade_check(_order(iv_rank=50.0), account=account, config=config, open_positions=[], as_of=date(2026, 4, 23))
+
         self.assertIn("iv_rank_too_low_for_short_premium", decision.reasons)
 
     def test_rejects_low_iv_rank_for_credit_butterfly_variant(self):

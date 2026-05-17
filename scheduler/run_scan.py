@@ -24,7 +24,7 @@ from core.models import OptionContract, StrategyContext, StrategyOrder
 from core.order_executor import execute_order, persist_open_order, position_from_order
 from core.quote_freshness import quote_timestamp
 from core.risk_manager import pre_trade_check
-from scheduler.common import build_context, configured_underlyings, current_positions, load_runtime
+from scheduler.common import build_context, configured_underlyings, current_positions, load_runtime, refresh_positions
 from strategies import build_enabled_strategies
 from strategies.earnings_calendar_scanner import scan_earnings_calendar_candidates, scan_volatility_crush_iron_condor_candidates
 from strategies.selection import build_candidate, rank_candidates
@@ -654,7 +654,10 @@ def scan_market(*, config: dict[str, Any], as_of: date | None = None, dry_run: b
     as_of = as_of or date.today()
     config, client, paths = load_runtime(config)
     account = client.get_account()
-    positions = current_positions(paths)
+    market_context = _market_context_for_scan(config=config, client=client, as_of=as_of)
+    if market_context:
+        account = {**account, "market_context": market_context}
+    positions = refresh_positions(current_positions(paths), client=client, as_of=as_of)
     strategies = build_enabled_strategies(config)
     underlyings = configured_underlyings(config)
     config = {
@@ -922,6 +925,33 @@ def scan_market(*, config: dict[str, Any], as_of: date | None = None, dry_run: b
     ai_disagreement_path = _persist_ai_disagreement_log(paths=paths, payload=result)
     result["ai_disagreement_path"] = str(ai_disagreement_path)
     return result
+
+
+def _market_context_for_scan(*, config: dict[str, Any], client: Any, as_of: date) -> dict[str, Any]:
+    if not _vix_scaling_enabled(config):
+        return {}
+    market_context_getter = getattr(client, "get_market_volatility_snapshot", None)
+    if not callable(market_context_getter):
+        return {}
+    try:
+        snapshot = market_context_getter(as_of=as_of)
+    except Exception as exc:
+        _LOGGER.warning("market volatility snapshot unavailable: %s", exc)
+        return {
+            "vix": None,
+            "source": "market_volatility_snapshot_error",
+            "reason": str(exc),
+            "as_of": as_of.isoformat(),
+        }
+    return snapshot if isinstance(snapshot, dict) else {}
+
+
+def _vix_scaling_enabled(config: dict[str, Any]) -> bool:
+    gates = config.get("gates") if isinstance(config, dict) else {}
+    if not isinstance(gates, dict):
+        return False
+    scaling = gates.get("vix_iv_rank_scaling", {})
+    return isinstance(scaling, dict) and bool(scaling.get("enabled", False))
 
 
 def main(argv: list[str] | None = None) -> int:

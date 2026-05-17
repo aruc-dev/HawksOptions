@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from core.broker_adapter import MarketDataClient, OrderSubmissionClient, TradingClient
+from core.broker_adapter import MarketDataClient, OrderExecutionClient, OrderSubmissionClient, TradingClient
 from core.models import OptionContract, OrderLeg, StrategyOrder
 from core.order_executor import execute_order
 
@@ -51,6 +51,13 @@ class FakeBroker:
     def get_option_chain(self, symbol: str, as_of: date | None = None) -> list[OptionContract]:
         return [_order().legs[0].contract]
 
+    def get_option_quotes(self, symbols: list[str]) -> dict[str, dict[str, Any]]:
+        timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        return {
+            symbol: {"bid": 1.0, "ask": 1.1, "source": "fake_broker", "timestamp": timestamp}
+            for symbol in symbols
+        }
+
     def get_account(self) -> dict[str, Any]:
         return {"equity": 100000.0, "portfolio_value": 100000.0, "cash": 90000.0, "buying_power": 200000.0}
 
@@ -79,6 +86,7 @@ class BrokerAdapterTests(unittest.TestCase):
 
         self.assertIsInstance(broker, MarketDataClient)
         self.assertIsInstance(broker, OrderSubmissionClient)
+        self.assertIsInstance(broker, OrderExecutionClient)
         self.assertIsInstance(broker, TradingClient)
 
     def test_order_executor_submits_through_protocol_without_alpaca_client(self):

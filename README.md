@@ -55,6 +55,13 @@ create `config/config.local.yaml`; it is deep-merged over `config/config.yaml`,
 so it only needs the keys you want to override. Files matching
 `config/config.local*` are git-ignored and must not be committed.
 
+When `gates.vix_iv_rank_scaling.enabled` is turned on with live market data,
+`market_data.vix_symbol` defaults to `VIXY`, a tradable Alpaca stock/ETF proxy.
+Override it in `config/config.local.yaml` if your provider uses a different
+volatility proxy. Because proxy ETF prices are not on the same scale as the VIX
+index, live proxy mode fails closed until `proxy_low_below` or
+`proxy_high_above` is configured under `gates.vix_iv_rank_scaling`.
+
 ## Optional: Beads Task Tracking
 
 This repo includes repo-level support for `bd` (Beads), an agent-oriented task

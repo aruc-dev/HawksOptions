@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from core.execution_quality import execution_quality_summary
@@ -61,6 +61,59 @@ def _order() -> StrategyOrder:
         iv_rank=50.0,
         required_options_level=3,
     )
+
+
+class _QuoteClient:
+    def get_option_quotes(self, symbols):
+        timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        return {
+            "SPY260619P00500000": {"bid": 1.2, "ask": 1.4, "source": "unit", "timestamp": timestamp},
+            "SPY260619P00499000": {"bid": 0.7, "ask": 0.8, "source": "unit", "timestamp": timestamp},
+        }
+
+
+class _LiveQuoteFallbackClient:
+    def __init__(self):
+        self.payloads = []
+
+    def get_option_quotes(self, symbols):
+        raise NotImplementedError("live option quote retrieval is not implemented")
+
+    def submit_order(self, payload):
+        self.payloads.append(payload)
+        return {"id": "live-1", "status": "accepted", "payload": payload}
+
+
+class _ProviderErrorQuoteClient:
+    def get_option_quotes(self, symbols):
+        raise TimeoutError("provider unavailable")
+
+
+class _LiveQuoteSubmitClient(_QuoteClient):
+    def __init__(self):
+        self.payloads = []
+
+    def submit_order(self, payload):
+        self.payloads.append(payload)
+        return {"id": "live-1", "status": "accepted", "payload": payload}
+
+
+class _InvalidQuoteSubmitClient(_LiveQuoteSubmitClient):
+    def get_option_quotes(self, symbols):
+        timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        return {
+            "SPY260619P00500000": {"bid": 0.0, "ask": 0.0, "source": "unit", "timestamp": timestamp},
+            "SPY260619P00499000": {"bid": 0.7, "ask": 0.8, "source": "unit", "timestamp": timestamp},
+        }
+
+
+class _StaleQuoteSubmitClient(_LiveQuoteSubmitClient):
+    def get_option_quotes(self, symbols):
+        timestamp = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(timespec="seconds")
+        return {
+            "SPY260619P00500000": {"bid": 1.2, "ask": 1.4, "source": "unit", "timestamp": timestamp},
+            "SPY260619P00499000": {"bid": 0.7, "ask": 0.8, "source": "unit", "timestamp": timestamp},
+        }
 
 
 class OrderExecutorTests(unittest.TestCase):
@@ -146,6 +199,72 @@ class OrderExecutorTests(unittest.TestCase):
         self.assertEqual(quality["retry_count"], 0)
         self.assertEqual(len(quality["legs"]), 2)
         self.assertIn("execution_quality", order.metadata)
+
+    def test_dry_run_execution_falls_back_when_nbbo_provider_fails(self):
+        order = _order()
+        result = execute_order(_ProviderErrorQuoteClient(), order, dry_run=True)
+
+        self.assertEqual(result["status"], "accepted")
+        self.assertEqual(result["nbbo_snapshot"]["warning"], "nbbo_capture_failed_dry_run_fallback")
+        self.assertEqual(result["nbbo_snapshot"]["legs"][0]["source"], "order_contract")
+        self.assertIn("execution_quality", order.metadata)
+
+    def test_execution_quality_uses_nbbo_snapshot_midpoints(self):
+        order = _order()
+        result = execute_order(_QuoteClient(), order, dry_run=True)
+        quality = result["execution_quality"]
+
+        self.assertIn("nbbo_snapshot", result)
+        self.assertEqual(quality["legs"][0]["expected_price"], 1.3)
+        self.assertEqual(quality["legs"][1]["expected_price"], 0.75)
+        self.assertEqual(quality["expected_net_opening_credit"], 55.0)
+
+    def test_live_execution_requires_fresh_nbbo_quotes(self):
+        order = _order()
+        client = _LiveQuoteFallbackClient()
+
+        with self.assertRaisesRegex(RuntimeError, "fresh_nbbo_required_for_live_order"):
+            execute_order(client, order, dry_run=False)
+
+        self.assertEqual(client.payloads, [])
+
+    def test_live_execution_submits_with_fresh_nbbo_quotes(self):
+        order = _order()
+        client = _LiveQuoteSubmitClient()
+
+        result = execute_order(client, order, dry_run=False)
+
+        self.assertEqual(result["id"], "live-1")
+        self.assertEqual(result["nbbo_snapshot"]["legs"][0]["source"], "unit")
+        self.assertEqual(result["execution_quality"]["expected_net_opening_credit"], 55.0)
+        self.assertEqual(len(client.payloads), 1)
+
+    def test_live_execution_rejects_invalid_client_nbbo_quotes(self):
+        order = _order()
+        client = _InvalidQuoteSubmitClient()
+
+        with self.assertRaisesRegex(RuntimeError, "fresh_nbbo_required_for_live_order"):
+            execute_order(client, order, dry_run=False)
+
+        self.assertEqual(client.payloads, [])
+        self.assertEqual(order.metadata["nbbo_snapshot"]["legs"][0]["source"], "order_contract")
+
+    def test_live_execution_rejects_stale_client_nbbo_quotes(self):
+        order = _order()
+        client = _StaleQuoteSubmitClient()
+
+        with self.assertRaisesRegex(RuntimeError, "fresh_nbbo_required_for_live_order"):
+            execute_order(client, order, dry_run=False)
+
+        self.assertEqual(client.payloads, [])
+
+    def test_trade_log_uses_nbbo_expected_prices(self):
+        order = _order()
+        result = execute_order(_QuoteClient(), order, dry_run=True)
+        rows = trade_log_rows_from_order(order, mode="paper", order_id="dryrun", execution_result=result)
+
+        self.assertEqual(rows[0]["expected_entry_price"], 1.3)
+        self.assertEqual(rows[1]["expected_entry_price"], 0.75)
 
     def test_execution_quality_tracks_partial_leg_slippage(self):
         order = _order()

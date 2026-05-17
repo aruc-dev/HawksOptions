@@ -16,6 +16,9 @@ class MarketDataClient(Protocol):
     def get_option_chain(self, symbol: str, as_of: date | None = None) -> list[OptionContract]:
         ...
 
+    def get_option_quotes(self, symbols: list[str]) -> dict[str, dict[str, Any]]:
+        ...
+
 
 @runtime_checkable
 class AccountClient(Protocol):
@@ -29,6 +32,12 @@ class AccountClient(Protocol):
 @runtime_checkable
 class OrderSubmissionClient(Protocol):
     def submit_order(self, payload: dict[str, Any]) -> dict[str, Any]:
+        ...
+
+
+@runtime_checkable
+class OrderExecutionClient(OrderSubmissionClient, Protocol):
+    def get_option_quotes(self, symbols: list[str]) -> dict[str, dict[str, Any]]:
         ...
 
 

@@ -184,8 +184,12 @@ def _parse_timestamp(value: str) -> datetime | None:
 
 
 def _hold_days(rows: list[dict[str, str]]) -> float | None:
-    opened = [_parse_timestamp(row.get("timestamp", "")) for row in rows if str(row.get("status", "")).lower() in {"open", "partially_filled"}]
-    closed = [_parse_timestamp(row.get("timestamp", "")) for row in rows if str(row.get("status", "")).lower() == "closed"]
+    opened = [_parse_timestamp(row.get("timestamp", "")) for row in rows]
+    closed = [
+        _parse_timestamp(row.get("close_timestamp", "") or row.get("timestamp", ""))
+        for row in rows
+        if str(row.get("status", "")).lower() == "closed"
+    ]
     opened = [item for item in opened if item is not None]
     closed = [item for item in closed if item is not None]
     if not opened or not closed:

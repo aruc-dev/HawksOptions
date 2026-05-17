@@ -7,11 +7,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from core.broker_adapter import OrderSubmissionClient
+from core.broker_adapter import OrderExecutionClient
 from core.execution_quality import execution_quality_summary
 from core.file_lock import atomic_write_text, lock_path_for, locked_open
 from core.limit_price import initial_limit_price, limit_price_improvement_plan
 from core.models import OrderLeg, PositionSnapshot, StrategyOrder
+from core.nbbo import capture_nbbo_snapshot, has_complete_client_nbbo
 from core.trade_log import append_trade_rows
 
 
@@ -44,12 +45,33 @@ def build_order_payload(order: StrategyOrder, *, config: dict[str, Any] | None =
 
 
 def execute_order(
-    client: OrderSubmissionClient,
+    client: OrderExecutionClient,
     order: StrategyOrder,
     *,
     dry_run: bool = True,
     config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    try:
+        nbbo_snapshot = capture_nbbo_snapshot(client, order)
+    except Exception as exc:
+        if not dry_run:
+            raise
+        nbbo_snapshot = {
+            "captured_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "legs": [
+                {
+                    "contract_symbol": leg.contract.contract_symbol,
+                    "bid": round(float(leg.contract.bid), 4),
+                    "ask": round(float(leg.contract.ask), 4),
+                    "midpoint": float(leg.contract.mid_price()),
+                    "source": "order_contract",
+                }
+                for leg in order.legs
+            ],
+            "warning": "nbbo_capture_failed_dry_run_fallback",
+            "reason": str(exc),
+        }
+        order.metadata["nbbo_snapshot"] = nbbo_snapshot
     limit_plan = limit_price_improvement_plan(order, config=config)
     order.metadata["limit_price_improvement"] = limit_plan
     payload = build_order_payload(order, config=config)
@@ -60,13 +82,17 @@ def execute_order(
             "payload": payload,
             "simulated_fill": True,
             "limit_price_improvement": limit_plan,
+            "nbbo_snapshot": nbbo_snapshot,
         }
         result["execution_quality"] = execution_quality_summary(order, response=result)
         order.metadata["execution_quality"] = result["execution_quality"]
         return result
+    if not has_complete_client_nbbo(nbbo_snapshot):
+        raise RuntimeError("fresh_nbbo_required_for_live_order")
     result = client.submit_order(payload)
     if isinstance(result, dict):
         result["limit_price_improvement"] = limit_plan
+        result["nbbo_snapshot"] = nbbo_snapshot
         result["execution_quality"] = execution_quality_summary(order, response=result)
         order.metadata["execution_quality"] = result["execution_quality"]
         return {

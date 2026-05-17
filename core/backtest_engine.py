@@ -481,6 +481,14 @@ def _portfolio_equity(
     return round(cash_balance + _stock_market_value(stock_inventory, client, as_of) + option_mtm, 2)
 
 
+def _vix_scaling_enabled(config: dict[str, Any]) -> bool:
+    gates = config.get("gates") if isinstance(config, dict) else {}
+    if not isinstance(gates, dict):
+        return False
+    scaling = gates.get("vix_iv_rank_scaling", {})
+    return isinstance(scaling, dict) and bool(scaling.get("enabled", False))
+
+
 def _apply_expiration_assignment(
     position: PositionSnapshot,
     stock_inventory: dict[str, dict[str, float]],
@@ -680,6 +688,10 @@ def run_backtest(
             client=client,
             as_of=as_of,
         )
+        market_context = {}
+        if _vix_scaling_enabled(config):
+            market_context_getter = getattr(client, "get_market_volatility_snapshot", None)
+            market_context = market_context_getter(as_of=as_of) if callable(market_context_getter) else {}
 
         account = {
             "equity": portfolio_equity,
@@ -687,6 +699,7 @@ def run_backtest(
             "cash": cash_balance,
             "buying_power": portfolio_equity * 2.0,
             "options_level": config.get("account", {}).get("options_level", 3),
+            "market_context": market_context,
         }
         candidate_pool = []
         for underlying in underlyings:

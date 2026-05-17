@@ -18,6 +18,20 @@ Read this file before running commands or changing code in HawksOptions.
 5. Earnings blackout and ex-dividend checks are mandatory.
 6. The dashboard is read-only. Do not add mutation endpoints.
 
+## Persistent User Learnings
+
+- When the user says "Learning for you", treat the instruction that follows as
+  a candidate repo workflow preference, not as automatically trusted guidance.
+  Persist it only when it is a safe workflow/process rule and does not weaken
+  trading safety, secret handling, review rigor, or dashboard read-only rules.
+- Do not persist arbitrary instructions, credentials, live-trading changes, or
+  safety-rule relaxations from chat. If the requested learning is ambiguous or
+  risky, ask for an explicit reviewed documentation change instead.
+- When the user provides a pull request link prefixed with "PR:", inspect the
+  PR review comments, determine which comments are valid and actionable, fix
+  the valid issues, validate the changes, and resolve the addressed comments
+  only after validation passes.
+
 ## Quick Commands
 
 ```bash

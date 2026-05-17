@@ -19,11 +19,21 @@ def _parse_iso(value: str) -> datetime | None:
         return None
 
 
-def _float(value: Any, default: float = 0.0) -> float:
+def _float(value: Any, default: float | None = 0.0) -> float | None:
     try:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _row_event_timestamp(row: dict[str, Any]) -> datetime | None:
+    if str(row.get("status", "")).lower() == "closed":
+        return _parse_iso(str(row.get("close_timestamp", "") or row.get("timestamp", "")))
+    return _parse_iso(str(row.get("timestamp", "")))
+
+
+def _row_entry_timestamp(row: dict[str, Any]) -> datetime | None:
+    return _parse_iso(str(row.get("timestamp", "")))
 
 
 def realized_pnl_for_row(row: dict[str, Any]) -> float:
@@ -46,7 +56,7 @@ def realized_pnl_today(rows: Iterable[dict[str, Any]], now_utc: datetime | None 
     for row in rows:
         if str(row.get("status", "")).lower() != "closed":
             continue
-        ts = _parse_iso(str(row.get("timestamp", "")))
+        ts = _row_event_timestamp(row)
         if ts is None or ts.date() != today:
             continue
         total += realized_pnl_for_row(row)
@@ -64,7 +74,7 @@ def realized_pnl_window(rows: Iterable[dict[str, Any]], *, lookback_days: int = 
     for row in rows:
         if str(row.get("status", "")).lower() != "closed":
             continue
-        ts = _parse_iso(str(row.get("timestamp", "")))
+        ts = _row_event_timestamp(row)
         if ts is None or ts < cutoff:
             continue
         pnl = realized_pnl_for_row(row)
@@ -90,7 +100,7 @@ def strategy_summary(rows: Iterable[dict[str, Any]], *, lookback_days: int = 30,
     for row in rows:
         if str(row.get("status", "")).lower() != "closed":
             continue
-        ts = _parse_iso(str(row.get("timestamp", "")))
+        ts = _row_event_timestamp(row)
         if ts is None or ts < cutoff:
             continue
         strategy = str(row.get("strategy", "unknown"))
@@ -108,6 +118,31 @@ def strategy_summary(rows: Iterable[dict[str, Any]], *, lookback_days: int = 30,
         count = bucket["count"] or 1
         bucket["win_rate"] = round(bucket["wins"] / count, 4)
         bucket["total_usd"] = round(bucket["total_usd"], 2)
+        out.append(bucket)
+    return sorted(out, key=lambda item: item["strategy"])
+
+
+def slippage_summary(rows: Iterable[dict[str, Any]], *, lookback_days: int = 30, now_utc: datetime | None = None) -> list[dict[str, Any]]:
+    now_utc = now_utc or datetime.now(timezone.utc)
+    cutoff = now_utc - timedelta(days=max(1, int(lookback_days)))
+    buckets: dict[str, dict[str, Any]] = defaultdict(lambda: {"strategy": "unknown", "leg_count": 0, "total_slippage_dollars": 0.0})
+    for row in rows:
+        ts = _row_entry_timestamp(row)
+        if ts is None or ts < cutoff:
+            continue
+        slippage = _float(row.get("leg_slippage_dollars"), default=None)
+        if slippage is None:
+            continue
+        strategy = str(row.get("strategy", "unknown"))
+        bucket = buckets[strategy]
+        bucket["strategy"] = strategy
+        bucket["leg_count"] += 1
+        bucket["total_slippage_dollars"] += slippage
+    out = []
+    for bucket in buckets.values():
+        count = bucket["leg_count"] or 1
+        bucket["total_slippage_dollars"] = round(bucket["total_slippage_dollars"], 2)
+        bucket["average_slippage_dollars"] = round(bucket["total_slippage_dollars"] / count, 4)
         out.append(bucket)
     return sorted(out, key=lambda item: item["strategy"])
 
