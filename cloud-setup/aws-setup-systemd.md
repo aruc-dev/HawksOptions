@@ -342,7 +342,8 @@ sudo tee /etc/systemd/logind.conf.d/99-hawksoptions-ram-secrets.conf >/dev/null 
 RemoveIPC=no
 EOF
 sudo systemctl restart systemd-logind.service
-systemd-analyze cat-config systemd/logind.conf | grep 'RemoveIPC='
+systemd-analyze --no-pager cat-config systemd/logind.conf \
+  | awk -F= '/^[[:space:]]*RemoveIPC[[:space:]]*=/ {gsub(/[[:space:]]/, "", $2); value=$2} END {print "RemoveIPC=" value}'
 ```
 
 The effective value must be:
@@ -901,7 +902,8 @@ Check:
   is not removed when `ec2-user` sessions end.
 
 ```bash
-systemd-analyze cat-config systemd/logind.conf | grep 'RemoveIPC='
+systemd-analyze --no-pager cat-config systemd/logind.conf \
+  | awk -F= '/^[[:space:]]*RemoveIPC[[:space:]]*=/ {gsub(/[[:space:]]/, "", $2); value=$2} END {print "RemoveIPC=" value}'
 sudo systemctl restart hawksoptions-secrets.service
 ls -l /dev/shm/.hawksoptions.env
 ```

@@ -19,7 +19,7 @@ echo "[INFO] systemd-logind RemoveIPC"
 remove_ipc=""
 if command -v systemd-analyze >/dev/null 2>&1; then
   remove_ipc="$(
-    systemd-analyze cat-config systemd/logind.conf 2>/dev/null \
+    systemd-analyze --no-pager cat-config systemd/logind.conf 2>/dev/null \
       | awk -F= '/^[[:space:]]*RemoveIPC[[:space:]]*=/ {gsub(/[[:space:]]/, "", $2); value=$2} END {print value}'
   )"
 fi
