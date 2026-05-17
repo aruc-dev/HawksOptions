@@ -212,6 +212,21 @@ class CloseExecutorTests(unittest.TestCase):
         self.assertEqual(position.pending_close_order_id, "close-1")
         self.assertEqual(position.pending_close_action, "take_profit")
 
+    def test_close_order_plans_tracks_active_broker_status_as_pending(self):
+        client = _Client(submit_status="accepted_for_bidding")
+        position = _position()
+        plans = close_order_plans(
+            [position],
+            [{"strategy_id": "vertical_spread-SPY-20260423", "action": "take_profit"}],
+            client=client,
+            execute_enabled=True,
+            dry_run=False,
+        )
+
+        self.assertEqual(plans[0]["result"]["status"], "accepted_for_bidding")
+        self.assertEqual(position.pending_close_order_id, "close-1")
+        self.assertEqual(position.pending_close_action, "take_profit")
+
     def test_close_order_plans_dedupe_duplicate_actions_by_priority(self):
         client = _Client()
         plans = close_order_plans(
@@ -460,6 +475,8 @@ class CloseExecutorTests(unittest.TestCase):
         self.assertTrue(all(row["status"] == "closed" for row in rows))
         self.assertTrue(all(row["order_id"] == "close-1" for row in rows))
         self.assertTrue(all(row["exit_reason"] == "take_profit" for row in rows))
+        self.assertTrue(all(row["timestamp"] == "2026-04-23T10:00:00+00:00" for row in rows))
+        self.assertTrue(all(row["close_timestamp"] == "2026-04-24T10:00:00+00:00" for row in rows))
         self.assertEqual(rows[0]["exit_price"], "0.5")
         self.assertEqual(rows[1]["exit_price"], "0.4")
         self.assertEqual(rows[0]["pnl_pct"], "50.0")

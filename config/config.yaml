@@ -30,6 +30,10 @@ gates:
     low_vix_min_iv_rank_for_short_premium: 50
     high_vix_above: 25
     high_vix_min_iv_rank_for_short_premium: 35
+    # Required when market_data.vix_symbol_scale is "proxy"; proxy ETF prices
+    # are not on the same scale as the VIX index.
+    proxy_low_below:
+    proxy_high_above:
   # Calendar spreads: flag for close when the front short leg's mid
   # falls within this many dollars per share of intrinsic value
   # (early-assignment risk).
@@ -57,6 +61,7 @@ market_data:
   # IV-rank scaling gate when sample data is disabled. Override this
   # if your data provider exposes a different volatility proxy.
   vix_symbol: VIXY
+  vix_symbol_scale: proxy
   risk_free_rate: 0.045
   default_dividend_yield: 0.0
 

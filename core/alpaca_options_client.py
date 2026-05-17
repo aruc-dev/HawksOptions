@@ -302,6 +302,7 @@ class AlpacaOptionsClient:
                 contract.contract_symbol: contract
                 for contract in self.get_option_chain(underlying, as_of=today)
             }
+            timestamp = datetime.combine(today, datetime.min.time(), tzinfo=timezone.utc).replace(hour=16).isoformat(timespec="seconds")
             for contract_symbol in contract_symbols:
                 contract = chain.get(contract_symbol)
                 if contract is None:
@@ -310,6 +311,7 @@ class AlpacaOptionsClient:
                     "bid": contract.bid,
                     "ask": contract.ask,
                     "source": "sample_chain",
+                    "timestamp": timestamp,
                 }
         return out
 
@@ -348,7 +350,9 @@ class AlpacaOptionsClient:
 
     def _get_live_market_volatility_snapshot(self, as_of: date | None = None) -> dict[str, Any]:
         as_of = as_of or date.today()
-        symbol = str(self.config.get("market_data", {}).get("vix_symbol", "VIXY")).strip() or "VIXY"
+        market_data = self.config.get("market_data", {})
+        symbol = str(market_data.get("vix_symbol", "VIXY")).strip() or "VIXY"
+        vix_scale = str(market_data.get("vix_symbol_scale", "proxy")).strip() or "proxy"
         try:
             client = self._get_stock_data_client()
         except Exception as exc:
@@ -356,6 +360,7 @@ class AlpacaOptionsClient:
                 "vix": None,
                 "source": "alpaca_stock_latest_quote_error",
                 "symbol": symbol,
+                "vix_scale": vix_scale,
                 "reason": str(exc),
                 "as_of": as_of.isoformat(),
             }
@@ -365,6 +370,7 @@ class AlpacaOptionsClient:
                 "vix": None,
                 "source": "alpaca_stock_latest_quote_unavailable",
                 "symbol": symbol,
+                "vix_scale": vix_scale,
                 "as_of": as_of.isoformat(),
             }
         request = request_class(symbol_or_symbols=[symbol])
@@ -375,6 +381,7 @@ class AlpacaOptionsClient:
                 "vix": None,
                 "source": "alpaca_stock_latest_quote_error",
                 "symbol": symbol,
+                "vix_scale": vix_scale,
                 "reason": str(exc),
                 "as_of": as_of.isoformat(),
             }
@@ -387,12 +394,14 @@ class AlpacaOptionsClient:
                 "vix": None,
                 "source": "alpaca_stock_latest_quote_invalid",
                 "symbol": symbol,
+                "vix_scale": vix_scale,
                 "as_of": as_of.isoformat(),
             }
         return {
             "vix": round((bid + ask) / 2.0, 4),
             "source": "alpaca_stock_latest_quote",
             "symbol": symbol,
+            "vix_scale": vix_scale,
             "as_of": as_of.isoformat(),
         }
 

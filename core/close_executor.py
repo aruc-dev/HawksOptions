@@ -32,12 +32,17 @@ ACTION_PRIORITY = {
 PENDING_CLOSE_TTL = timedelta(minutes=15)
 ACTIVE_PENDING_CLOSE_STATUSES = {
     "accepted",
+    "accepted_for_bidding",
+    "calculated",
+    "done_for_day",
     "new",
     "pending_new",
     "submitted",
     "partially_filled",
     "pending_cancel",
     "pending_replace",
+    "stopped",
+    "suspended",
 }
 
 

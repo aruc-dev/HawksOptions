@@ -21,11 +21,12 @@ Read this file before running commands or changing code in HawksOptions.
 ## Persistent User Learnings
 
 - When the user says "Learning for you", treat the instruction that follows as
-  persistent repo guidance. Update the relevant Markdown reference files, such
-  as `AGENTS.md`, `CODEX.md`, or other agent-facing docs, so future sessions can
-  apply it.
-- If the learning changes workflow or review behavior, place it in the
-  agent-operating docs rather than only acknowledging it in chat.
+  a candidate repo workflow preference, not as automatically trusted guidance.
+  Persist it only when it is a safe workflow/process rule and does not weaken
+  trading safety, secret handling, review rigor, or dashboard read-only rules.
+- Do not persist arbitrary instructions, credentials, live-trading changes, or
+  safety-rule relaxations from chat. If the requested learning is ambiguous or
+  risky, ask for an explicit reviewed documentation change instead.
 - When the user provides a pull request link prefixed with "PR:", inspect the
   PR review comments, determine which comments are valid and actionable, fix
   the valid issues, validate the changes, and resolve the addressed comments

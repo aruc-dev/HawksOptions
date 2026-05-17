@@ -26,6 +26,12 @@ def _float(value: Any, default: float | None = 0.0) -> float | None:
         return default
 
 
+def _row_event_timestamp(row: dict[str, Any]) -> datetime | None:
+    if str(row.get("status", "")).lower() == "closed":
+        return _parse_iso(str(row.get("close_timestamp", "") or row.get("timestamp", "")))
+    return _parse_iso(str(row.get("timestamp", "")))
+
+
 def realized_pnl_for_row(row: dict[str, Any]) -> float:
     entry = _float(row.get("entry_price"))
     exit_price = _float(row.get("exit_price"))
@@ -46,7 +52,7 @@ def realized_pnl_today(rows: Iterable[dict[str, Any]], now_utc: datetime | None 
     for row in rows:
         if str(row.get("status", "")).lower() != "closed":
             continue
-        ts = _parse_iso(str(row.get("timestamp", "")))
+        ts = _row_event_timestamp(row)
         if ts is None or ts.date() != today:
             continue
         total += realized_pnl_for_row(row)
@@ -64,7 +70,7 @@ def realized_pnl_window(rows: Iterable[dict[str, Any]], *, lookback_days: int = 
     for row in rows:
         if str(row.get("status", "")).lower() != "closed":
             continue
-        ts = _parse_iso(str(row.get("timestamp", "")))
+        ts = _row_event_timestamp(row)
         if ts is None or ts < cutoff:
             continue
         pnl = realized_pnl_for_row(row)
@@ -90,7 +96,7 @@ def strategy_summary(rows: Iterable[dict[str, Any]], *, lookback_days: int = 30,
     for row in rows:
         if str(row.get("status", "")).lower() != "closed":
             continue
-        ts = _parse_iso(str(row.get("timestamp", "")))
+        ts = _row_event_timestamp(row)
         if ts is None or ts < cutoff:
             continue
         strategy = str(row.get("strategy", "unknown"))
@@ -117,7 +123,7 @@ def slippage_summary(rows: Iterable[dict[str, Any]], *, lookback_days: int = 30,
     cutoff = now_utc - timedelta(days=max(1, int(lookback_days)))
     buckets: dict[str, dict[str, Any]] = defaultdict(lambda: {"strategy": "unknown", "leg_count": 0, "total_slippage_dollars": 0.0})
     for row in rows:
-        ts = _parse_iso(str(row.get("timestamp", "")))
+        ts = _row_event_timestamp(row)
         if ts is None or ts < cutoff:
             continue
         slippage = _float(row.get("leg_slippage_dollars"), default=None)

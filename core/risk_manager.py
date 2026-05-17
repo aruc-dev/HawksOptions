@@ -146,10 +146,12 @@ def pre_trade_check(
         reasons.append("earnings_blackout")
 
     if order.net_opening_credit > 0:
-        if _vix_scaling_requires_market_context(order, gates, account):
+        short_premium_iv_rank, strict_threshold = _short_premium_iv_rank_threshold(order, gates, account)
+        if short_premium_iv_rank is None:
             reasons.append("vix_unavailable_for_iv_rank_scaling")
-        short_premium_iv_rank = _short_premium_iv_rank_threshold(order, gates, account)
-        if order.iv_rank <= short_premium_iv_rank:
+        elif strict_threshold and order.iv_rank <= short_premium_iv_rank:
+            reasons.append("iv_rank_too_low_for_short_premium")
+        elif not strict_threshold and order.iv_rank < short_premium_iv_rank:
             reasons.append("iv_rank_too_low_for_short_premium")
     if order.net_opening_credit < 0 and order.iv_rank > float(gates.get("max_iv_rank_for_long_premium", 40)):
         reasons.append("iv_rank_too_high_for_long_premium")
@@ -206,44 +208,70 @@ def aggregate_portfolio_greeks(positions: Iterable[PositionSnapshot]) -> dict[st
     return {key: round(value, 4) for key, value in totals.items()}
 
 
-def _short_premium_iv_rank_threshold(order: StrategyOrder, gates: dict[str, Any], account: dict[str, Any]) -> float:
+def _short_premium_iv_rank_threshold(order: StrategyOrder, gates: dict[str, Any], account: dict[str, Any]) -> tuple[float | None, bool]:
     base = float(gates.get("min_iv_rank_for_short_premium", 30))
     scaling = gates.get("vix_iv_rank_scaling") or {}
     if not isinstance(scaling, dict) or not bool(scaling.get("enabled", False)):
-        return base
-    vix = _market_vix(order, account)
-    if vix is None:
-        return base
-    if vix < float(scaling.get("low_vix_below", 15.0)):
-        return float(scaling.get("low_vix_min_iv_rank_for_short_premium", max(base, 50.0)))
-    if vix > float(scaling.get("high_vix_above", 25.0)):
-        return float(scaling.get("high_vix_min_iv_rank_for_short_premium", 35.0))
-    return base
+        return base, False
+    context = _market_volatility_context(order, account)
+    if context is None:
+        return None, True
+    vix = float(context["vix"])
+    scale = str(context.get("scale", "index")).lower()
+    low_key = "low_vix_below"
+    high_key = "high_vix_above"
+    if scale not in {"index", "vix", "sample"}:
+        low_key = "proxy_low_below"
+        high_key = "proxy_high_above"
+        if _optional_float(scaling.get(low_key)) is None and _optional_float(scaling.get(high_key)) is None:
+            return None, True
+    low_threshold = _optional_float(scaling.get(low_key))
+    if low_threshold is not None and vix < low_threshold:
+        return float(scaling.get("low_vix_min_iv_rank_for_short_premium", max(base, 50.0))), True
+    high_threshold = _optional_float(scaling.get(high_key))
+    if high_threshold is not None and vix > high_threshold:
+        return float(scaling.get("high_vix_min_iv_rank_for_short_premium", 35.0)), True
+    return base, False
 
 
 def _vix_scaling_requires_market_context(order: StrategyOrder, gates: dict[str, Any], account: dict[str, Any]) -> bool:
     scaling = gates.get("vix_iv_rank_scaling") or {}
     if not isinstance(scaling, dict) or not bool(scaling.get("enabled", False)):
         return False
-    return _market_vix(order, account) is None
+    threshold, _ = _short_premium_iv_rank_threshold(order, gates, account)
+    return threshold is None
 
 
-def _market_vix(order: StrategyOrder, account: dict[str, Any]) -> float | None:
-    candidates = []
+def _market_volatility_context(order: StrategyOrder, account: dict[str, Any]) -> dict[str, Any] | None:
+    candidates: list[dict[str, Any]] = []
     order_context = order.metadata.get("market_context")
     if isinstance(order_context, dict):
-        candidates.append(order_context.get("vix"))
+        candidates.append(order_context)
     account_context = account.get("market_context")
     if isinstance(account_context, dict):
-        candidates.append(account_context.get("vix"))
-    for value in candidates:
+        candidates.append(account_context)
+    for context in candidates:
+        value = context.get("vix")
         if value in (None, ""):
             continue
         try:
-            return float(value)
+            vix = float(value)
         except (TypeError, ValueError):
             continue
+        return {
+            "vix": vix,
+            "scale": context.get("vix_scale") or context.get("volatility_scale") or "index",
+        }
     return None
+
+
+def _optional_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def identify_elevated_positions(

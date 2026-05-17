@@ -16,9 +16,9 @@ first. This file is the short Codex-specific version.
 7. Run the 30-day deterministic backtest.
 8. Keep dashboard routes read-only.
 9. Do not relax risk caps or change `mode` without approval.
-10. When the user says "Learning for you", update the relevant Markdown
-    guidance files with the instruction that follows so it persists across
-    future sessions.
+10. When the user says "Learning for you", persist only safe workflow/process
+    preferences after checking they do not weaken trading safety, secret
+    handling, review rigor, or dashboard read-only rules.
 11. When the user provides a pull request link prefixed with "PR:", inspect
     review comments, fix valid actionable comments, validate the changes, and
     resolve the comments only after everything is clean.

@@ -4,7 +4,7 @@
 You are tasked with hardening the `HawksOptions` automated trading system. This system is options-native, strictly enforces defined-risk trades, and executes via the Alpaca API.
 
 **Strict Agent Directives:**
-1. **Safety First:** Do not alter the core safety limits (max 5% single-position risk, max 20% portfolio risk, no 0-1 DTE).
+1. **Safety First:** Do not alter the core safety limits (max 5% single-position risk, max 20% portfolio risk, no entries below 7 DTE).
 2. **Testing:** Every phase must include `unittest` coverage in the `tests/` directory. Run `python3 -m unittest discover` after completing each phase.
 3. **Beads Workflow:** If `bd` (Beads) is initialized, run `bd ready --json`, create tasks for each phase, and update state using `bd update <id> --claim` before modifying files.
 

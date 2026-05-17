@@ -14,6 +14,7 @@ from core.models import PositionSnapshot
 
 TRADE_LOG_FIELDS = [
     "timestamp",
+    "close_timestamp",
     "mode",
     "strategy",
     "underlying",
@@ -108,7 +109,7 @@ def mark_strategy_closed(
             if str(row.get("status", "")).lower() not in {"open", "partially_filled"}:
                 continue
             symbol = str(row.get("contract_symbol", ""))
-            row["timestamp"] = closed_at.isoformat(timespec="seconds")
+            row["close_timestamp"] = closed_at.isoformat(timespec="seconds")
             row["exit_price"] = _csv_text(exit_prices.get(symbol, ""))
             row["exit_reason"] = exit_reason
             row["order_id"] = position.close_order_id or row.get("order_id", "")

@@ -76,6 +76,38 @@ class DriftReportTests(unittest.TestCase):
         self.assertEqual(summary["drift"]["avg_hold_days_delta"], 1.0)
         self.assertIn("limitations", summary)
 
+    def test_closed_rows_use_close_timestamp_for_hold_days(self):
+        result = BacktestResult(
+            starting_fund=10000.0,
+            ending_equity=10000.0,
+            total_return_pct=0.0,
+            sharpe=0.0,
+            max_drawdown_pct=0.0,
+            win_rate=0.0,
+            trade_count=0,
+            closed_trade_count=0,
+            rejected_reasons={},
+            metrics={"avg_hold_days": 0.0},
+        )
+        with TemporaryDirectory() as tmp:
+            trade_log_path = Path(tmp) / "trades.csv"
+            with trade_log_path.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=TRADE_LOG_FIELDS)
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "timestamp": "2026-04-20T10:00:00+00:00",
+                        "close_timestamp": "2026-04-23T10:00:00+00:00",
+                        "mode": "paper",
+                        "strategy_id": "iron-SPY-1",
+                        "status": "closed",
+                    }
+                )
+
+            summary = build_drift_summary(trade_log_path=trade_log_path, backtest_result=result)
+
+        self.assertEqual(summary["paper"]["avg_hold_days"], 3.0)
+
     def test_write_drift_report_persists_markdown_with_json_payload(self):
         summary = {
             "paper": {

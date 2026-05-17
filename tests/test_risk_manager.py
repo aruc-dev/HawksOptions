@@ -129,6 +129,11 @@ class PreTradeRiskTests(unittest.TestCase):
         decision = pre_trade_check(_order(iv_rank=10.0), account=self.account, config=self.config, open_positions=[], as_of=date(2026, 4, 23))
         self.assertIn("iv_rank_too_low_for_short_premium", decision.reasons)
 
+    def test_unscaled_iv_rank_minimum_accepts_equal_threshold(self):
+        decision = pre_trade_check(_order(iv_rank=30.0), account=self.account, config=self.config, open_positions=[], as_of=date(2026, 4, 23))
+
+        self.assertNotIn("iv_rank_too_low_for_short_premium", decision.reasons)
+
     def test_vix_scaling_raises_short_premium_iv_threshold_when_vix_is_low(self):
         config = {
             **self.config,
@@ -201,6 +206,42 @@ class PreTradeRiskTests(unittest.TestCase):
         decision = pre_trade_check(_order(iv_rank=60.0), account=self.account, config=config, open_positions=[], as_of=date(2026, 4, 23))
 
         self.assertIn("vix_unavailable_for_iv_rank_scaling", decision.reasons)
+
+    def test_vix_scaling_fails_closed_for_proxy_without_proxy_thresholds(self):
+        config = {
+            **self.config,
+            "gates": {
+                **self.config["gates"],
+                "vix_iv_rank_scaling": {
+                    "enabled": True,
+                    "low_vix_below": 15,
+                    "high_vix_above": 25,
+                },
+            },
+        }
+        account = {**self.account, "market_context": {"vix": 21.0, "vix_scale": "proxy"}}
+
+        decision = pre_trade_check(_order(iv_rank=60.0), account=account, config=config, open_positions=[], as_of=date(2026, 4, 23))
+
+        self.assertIn("vix_unavailable_for_iv_rank_scaling", decision.reasons)
+
+    def test_vix_scaling_uses_proxy_thresholds_for_proxy_context(self):
+        config = {
+            **self.config,
+            "gates": {
+                **self.config["gates"],
+                "vix_iv_rank_scaling": {
+                    "enabled": True,
+                    "proxy_low_below": 20,
+                    "low_vix_min_iv_rank_for_short_premium": 50,
+                },
+            },
+        }
+        account = {**self.account, "market_context": {"vix": 19.0, "vix_scale": "proxy"}}
+
+        decision = pre_trade_check(_order(iv_rank=50.0), account=account, config=config, open_positions=[], as_of=date(2026, 4, 23))
+
+        self.assertIn("iv_rank_too_low_for_short_premium", decision.reasons)
 
     def test_rejects_low_iv_rank_for_credit_butterfly_variant(self):
         order = _order(iv_rank=10.0)

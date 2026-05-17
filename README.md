@@ -58,7 +58,9 @@ so it only needs the keys you want to override. Files matching
 When `gates.vix_iv_rank_scaling.enabled` is turned on with live market data,
 `market_data.vix_symbol` defaults to `VIXY`, a tradable Alpaca stock/ETF proxy.
 Override it in `config/config.local.yaml` if your provider uses a different
-volatility proxy.
+volatility proxy. Because proxy ETF prices are not on the same scale as the VIX
+index, live proxy mode fails closed until `proxy_low_below` or
+`proxy_high_above` is configured under `gates.vix_iv_rank_scaling`.
 
 ## Optional: Beads Task Tracking
 

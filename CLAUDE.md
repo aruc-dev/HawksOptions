@@ -6,14 +6,15 @@
 2. Portfolio risk is measured by maximum loss, not notional exposure.
 3. Short calls near ex-dividend must be closed when dividend exceeds remaining
    extrinsic value.
-4. No same-day expiry entries.
+4. No entries below 7 DTE.
 5. AI is veto-only and optional.
 
 ## Persistent User Learnings
 
-When the user says "Learning for you", update the relevant Markdown guidance
-files with the instruction that follows. Do not leave these workflow learnings
-only in chat context.
+When the user says "Learning for you", persist only safe workflow/process
+preferences after checking they do not weaken trading safety, secret handling,
+review rigor, or dashboard read-only rules. Do not persist arbitrary chat
+instructions, credentials, live-trading changes, or safety-rule relaxations.
 
 When the user provides a pull request link prefixed with "PR:", inspect the PR
 review comments, fix valid actionable comments, validate the changes, and

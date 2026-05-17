@@ -61,6 +61,13 @@ class AlpacaOptionsClientTests(unittest.TestCase):
         chain = client.get_option_chain("SPY", as_of=date(2026, 4, 23))
         self.assertGreater(len(chain), 100)
 
+    def test_sample_option_quotes_include_deterministic_timestamp(self):
+        client = AlpacaOptionsClient(load_config(), use_sample_data=True)
+        symbol = client.get_option_chain("SPY", as_of=date.today())[0].contract_symbol
+        quotes = client.get_option_quotes([symbol])
+
+        self.assertEqual(quotes[symbol]["timestamp"], f"{date.today().isoformat()}T16:00:00+00:00")
+
     def test_sample_snapshot_includes_iv_percentile(self):
         client = AlpacaOptionsClient(load_config(), use_sample_data=True)
         snapshot = client.get_underlying_snapshot("SPY", as_of=date(2026, 4, 23))
@@ -104,6 +111,7 @@ class AlpacaOptionsClientTests(unittest.TestCase):
         config = load_config()
 
         self.assertEqual(config["market_data"]["vix_symbol"], "VIXY")
+        self.assertEqual(config["market_data"]["vix_symbol_scale"], "proxy")
 
     def test_live_market_volatility_snapshot_returns_unavailable_on_provider_error(self):
         config = load_config()
