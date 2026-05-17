@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from core.models import StrategyOrder
+
+MAX_CLIENT_NBBO_AGE = timedelta(seconds=60)
 
 
 def capture_nbbo_snapshot(client: Any, order: StrategyOrder) -> dict[str, Any]:
@@ -18,20 +20,23 @@ def capture_nbbo_snapshot(client: Any, order: StrategyOrder) -> dict[str, Any]:
         bid = _float_or_none(quote.get("bid"))
         ask = _float_or_none(quote.get("ask"))
         source = str(quote.get("source", "client_quote"))
+        timestamp = _quote_timestamp(quote)
         if bid is None or ask is None or bid <= 0 or ask <= 0 or ask < bid:
             bid = float(leg.contract.bid)
             ask = float(leg.contract.ask)
             source = "order_contract"
+            timestamp = None
         midpoint = round((bid + ask) / 2.0, 4) if bid > 0 and ask > 0 else float(leg.contract.mid_price())
-        legs.append(
-            {
-                "contract_symbol": symbol,
-                "bid": round(bid, 4),
-                "ask": round(ask, 4),
-                "midpoint": midpoint,
-                "source": source,
-            }
-        )
+        item = {
+            "contract_symbol": symbol,
+            "bid": round(bid, 4),
+            "ask": round(ask, 4),
+            "midpoint": midpoint,
+            "source": source,
+        }
+        if timestamp is not None:
+            item["timestamp"] = timestamp.isoformat(timespec="seconds")
+        legs.append(item)
     snapshot = {
         "captured_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "legs": legs,
@@ -60,6 +65,9 @@ def has_complete_client_nbbo(snapshot: dict[str, Any]) -> bool:
     legs = snapshot.get("legs", [])
     if not isinstance(legs, list) or not legs:
         return False
+    captured_at = _parse_datetime(snapshot.get("captured_at"))
+    if captured_at is None:
+        return False
     for item in legs:
         if not isinstance(item, dict) or item.get("source") == "order_contract":
             return False
@@ -67,6 +75,9 @@ def has_complete_client_nbbo(snapshot: dict[str, Any]) -> bool:
         ask = _float_or_none(item.get("ask"))
         midpoint = _float_or_none(item.get("midpoint"))
         if bid is None or ask is None or midpoint is None or bid <= 0 or ask <= 0 or midpoint <= 0 or ask < bid:
+            return False
+        quote_time = _parse_datetime(item.get("timestamp"))
+        if quote_time is None or quote_time > captured_at or captured_at - quote_time > MAX_CLIENT_NBBO_AGE:
             return False
     return True
 
@@ -95,3 +106,31 @@ def _float_or_none(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _quote_timestamp(quote: dict[str, Any]) -> datetime | None:
+    for key in ("timestamp", "quote_timestamp", "updated_at", "t"):
+        parsed = _parse_datetime(quote.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)

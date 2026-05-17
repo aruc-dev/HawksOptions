@@ -147,6 +147,24 @@ class PreTradeRiskTests(unittest.TestCase):
 
         self.assertIn("iv_rank_too_low_for_short_premium", decision.reasons)
 
+    def test_vix_scaling_rejects_iv_rank_equal_to_scaled_threshold(self):
+        config = {
+            **self.config,
+            "gates": {
+                **self.config["gates"],
+                "vix_iv_rank_scaling": {
+                    "enabled": True,
+                    "low_vix_below": 15,
+                    "low_vix_min_iv_rank_for_short_premium": 50,
+                },
+            },
+        }
+        account = {**self.account, "market_context": {"vix": 12.0}}
+
+        decision = pre_trade_check(_order(iv_rank=50.0), account=account, config=config, open_positions=[], as_of=date(2026, 4, 23))
+
+        self.assertIn("iv_rank_too_low_for_short_premium", decision.reasons)
+
     def test_vix_scaling_uses_high_vix_threshold_when_vix_is_elevated(self):
         config = {
             **self.config,

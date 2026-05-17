@@ -335,11 +335,15 @@ class AlpacaOptionsClient:
             ask = _quote_value(quote, "ask_price", "ap", "ask")
             if bid is None or ask is None or bid <= 0 or ask <= 0 or ask < bid:
                 continue
-            out[str(symbol)] = {
+            item = {
                 "bid": bid,
                 "ask": ask,
                 "source": "alpaca_option_latest_quote",
             }
+            timestamp = _quote_datetime(quote, "timestamp", "t")
+            if timestamp is not None:
+                item["timestamp"] = timestamp.isoformat(timespec="seconds")
+            out[str(symbol)] = item
         return out
 
     def _get_live_market_volatility_snapshot(self, as_of: date | None = None) -> dict[str, Any]:
@@ -414,4 +418,27 @@ def _quote_value(quote: Any, *names: str) -> float | None:
             return float(value)
         except (TypeError, ValueError):
             continue
+    return None
+
+
+def _quote_datetime(quote: Any, *names: str) -> datetime | None:
+    if quote is None:
+        return None
+    for name in names:
+        value = quote.get(name) if isinstance(quote, dict) else getattr(quote, name, None)
+        if value in (None, ""):
+            continue
+        if isinstance(value, datetime):
+            parsed = value
+        else:
+            text = str(value).strip()
+            if text.endswith("Z"):
+                text = text[:-1] + "+00:00"
+            try:
+                parsed = datetime.fromisoformat(text)
+            except ValueError:
+                continue
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
     return None

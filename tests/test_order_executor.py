@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from core.execution_quality import execution_quality_summary
@@ -65,9 +65,10 @@ def _order() -> StrategyOrder:
 
 class _QuoteClient:
     def get_option_quotes(self, symbols):
+        timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
         return {
-            "SPY260619P00500000": {"bid": 1.2, "ask": 1.4, "source": "unit"},
-            "SPY260619P00499000": {"bid": 0.7, "ask": 0.8, "source": "unit"},
+            "SPY260619P00500000": {"bid": 1.2, "ask": 1.4, "source": "unit", "timestamp": timestamp},
+            "SPY260619P00499000": {"bid": 0.7, "ask": 0.8, "source": "unit", "timestamp": timestamp},
         }
 
 
@@ -94,9 +95,19 @@ class _LiveQuoteSubmitClient(_QuoteClient):
 
 class _InvalidQuoteSubmitClient(_LiveQuoteSubmitClient):
     def get_option_quotes(self, symbols):
+        timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
         return {
-            "SPY260619P00500000": {"bid": 0.0, "ask": 0.0, "source": "unit"},
-            "SPY260619P00499000": {"bid": 0.7, "ask": 0.8, "source": "unit"},
+            "SPY260619P00500000": {"bid": 0.0, "ask": 0.0, "source": "unit", "timestamp": timestamp},
+            "SPY260619P00499000": {"bid": 0.7, "ask": 0.8, "source": "unit", "timestamp": timestamp},
+        }
+
+
+class _StaleQuoteSubmitClient(_LiveQuoteSubmitClient):
+    def get_option_quotes(self, symbols):
+        timestamp = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(timespec="seconds")
+        return {
+            "SPY260619P00500000": {"bid": 1.2, "ask": 1.4, "source": "unit", "timestamp": timestamp},
+            "SPY260619P00499000": {"bid": 0.7, "ask": 0.8, "source": "unit", "timestamp": timestamp},
         }
 
 
@@ -223,6 +234,15 @@ class OrderExecutorTests(unittest.TestCase):
 
         self.assertEqual(client.payloads, [])
         self.assertEqual(order.metadata["nbbo_snapshot"]["legs"][0]["source"], "order_contract")
+
+    def test_live_execution_rejects_stale_client_nbbo_quotes(self):
+        order = _order()
+        client = _StaleQuoteSubmitClient()
+
+        with self.assertRaisesRegex(RuntimeError, "fresh_nbbo_required_for_live_order"):
+            execute_order(client, order, dry_run=False)
+
+        self.assertEqual(client.payloads, [])
 
     def test_trade_log_uses_nbbo_expected_prices(self):
         order = _order()

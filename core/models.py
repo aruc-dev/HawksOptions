@@ -171,6 +171,7 @@ class PositionSnapshot:
     closed_at: datetime | None = None
     close_order_id: str = ""
     close_action: str = ""
+    close_fill_prices: dict[str, float] = field(default_factory=dict)
 
     @property
     def days_to_expiration(self) -> int:
@@ -236,6 +237,8 @@ class PositionSnapshot:
             payload["close_order_id"] = self.close_order_id
         if self.close_action:
             payload["close_action"] = self.close_action
+        if self.close_fill_prices:
+            payload["close_fill_prices"] = dict(self.close_fill_prices)
         return payload
 
     @classmethod
@@ -282,6 +285,10 @@ class PositionSnapshot:
             closed_at=_to_datetime(payload.get("closed_at")),
             close_order_id=str(payload.get("close_order_id", "")),
             close_action=str(payload.get("close_action", "")),
+            close_fill_prices={
+                str(symbol): float(price)
+                for symbol, price in (payload.get("close_fill_prices") or {}).items()
+            } if isinstance(payload.get("close_fill_prices"), dict) else {},
         )
 
 

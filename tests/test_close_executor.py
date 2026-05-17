@@ -114,8 +114,9 @@ class _Client:
         return status
 
     def get_option_quotes(self, symbols):
+        timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
         return {
-            symbol: {"bid": 1.0, "ask": 1.1, "source": "test_quote"}
+            symbol: {"bid": 1.0, "ask": 1.1, "source": "test_quote", "timestamp": timestamp}
             for symbol in symbols
         }
 
@@ -126,8 +127,9 @@ class _NoStatusClient(_Client):
 
 class _InvalidQuoteClient(_Client):
     def get_option_quotes(self, symbols):
+        timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
         return {
-            symbol: {"bid": 0.0, "ask": 0.0, "source": "bad_quote"}
+            symbol: {"bid": 0.0, "ask": 0.0, "source": "bad_quote", "timestamp": timestamp}
             for symbol in symbols
         }
 
@@ -320,7 +322,13 @@ class CloseExecutorTests(unittest.TestCase):
 
     def test_close_order_plans_mark_filled_pending_close_as_closed(self):
         client = _Client()
-        client.statuses["close-pending"] = "filled"
+        client.statuses["close-pending"] = {
+            "status": "filled",
+            "legs": [
+                {"symbol": "SPY260619P00500000", "filled_avg_price": 0.5},
+                {"symbol": "SPY260619P00499000", "filled_avg_price": 0.4},
+            ],
+        }
         position = _position()
         position.pending_close_order_id = "close-pending"
         position.pending_close_action = "take_profit"
@@ -334,10 +342,11 @@ class CloseExecutorTests(unittest.TestCase):
             dry_run=False,
         )
 
-        self.assertEqual(plans[0]["result"]["status"], "skipped_closed")
+        self.assertEqual(plans[0]["result"]["status"], "reconciled_closed")
         self.assertEqual(client.payloads, [])
         self.assertIsNotNone(position.closed_at)
         self.assertEqual(position.close_order_id, "close-pending")
+        self.assertEqual(position.close_fill_prices["SPY260619P00500000"], 0.5)
 
     def test_close_order_plans_mark_immediate_filled_submit_as_closed(self):
         client = _Client(submit_status="filled")
@@ -355,6 +364,26 @@ class CloseExecutorTests(unittest.TestCase):
         self.assertIsNotNone(position.closed_at)
         self.assertEqual(position.close_order_id, "close-1")
         self.assertEqual(position.pending_close_order_id, "")
+
+    def test_close_order_plans_reconciles_pending_close_without_new_action(self):
+        client = _Client()
+        client.statuses["close-pending"] = "filled"
+        position = _position()
+        position.pending_close_order_id = "close-pending"
+        position.pending_close_action = "take_profit"
+        position.pending_close_submitted_at = datetime.now(timezone.utc) - timedelta(minutes=30)
+
+        plans = close_order_plans(
+            [position],
+            [],
+            client=client,
+            execute_enabled=True,
+            dry_run=False,
+        )
+
+        self.assertEqual(plans[0]["result"]["status"], "reconciled_closed")
+        self.assertIsNotNone(position.closed_at)
+        self.assertEqual(client.payloads, [])
 
     def test_position_snapshot_persists_underlying_price_and_pending_close(self):
         position = _position()
@@ -411,9 +440,13 @@ class CloseExecutorTests(unittest.TestCase):
                 ],
             )
             position = _position()
-            position.current_pnl = 10.0
+            position.current_pnl = 999.0
             position.closed_at = datetime(2026, 4, 24, 10, 0, tzinfo=timezone.utc)
             position.close_order_id = "close-1"
+            position.close_fill_prices = {
+                "SPY260619P00500000": 0.50,
+                "SPY260619P00499000": 0.40,
+            }
 
             updated = mark_strategy_closed(
                 path,
@@ -427,8 +460,8 @@ class CloseExecutorTests(unittest.TestCase):
         self.assertTrue(all(row["status"] == "closed" for row in rows))
         self.assertTrue(all(row["order_id"] == "close-1" for row in rows))
         self.assertTrue(all(row["exit_reason"] == "take_profit" for row in rows))
-        self.assertEqual(rows[0]["exit_price"], "1.05")
-        self.assertEqual(rows[1]["exit_price"], "0.85")
+        self.assertEqual(rows[0]["exit_price"], "0.5")
+        self.assertEqual(rows[1]["exit_price"], "0.4")
         self.assertEqual(rows[0]["pnl_pct"], "50.0")
 
 

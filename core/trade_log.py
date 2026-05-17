@@ -97,7 +97,8 @@ def mark_strategy_closed(
         leg.contract.contract_symbol: round(float(leg.contract.mid_price()), 4)
         for leg in position.legs
     }
-    pnl_pct = _position_pnl_pct(position)
+    exit_prices.update(position.close_fill_prices)
+    updated_rows = []
     updated = 0
     with locked_open(path, "r+", lock="exclusive", newline="") as handle:
         rows = list(csv.DictReader(handle))
@@ -109,11 +110,14 @@ def mark_strategy_closed(
             symbol = str(row.get("contract_symbol", ""))
             row["timestamp"] = closed_at.isoformat(timespec="seconds")
             row["exit_price"] = _csv_text(exit_prices.get(symbol, ""))
-            row["pnl_pct"] = _csv_text(pnl_pct)
             row["exit_reason"] = exit_reason
             row["order_id"] = position.close_order_id or row.get("order_id", "")
             row["status"] = "closed"
+            updated_rows.append(row)
             updated += 1
+        pnl_pct = _realized_pnl_pct(updated_rows, position)
+        for row in updated_rows:
+            row["pnl_pct"] = _csv_text(pnl_pct)
         if updated:
             handle.seek(0)
             handle.truncate(0)
@@ -122,6 +126,35 @@ def mark_strategy_closed(
             for row in rows:
                 writer.writerow({field: row.get(field, "") for field in TRADE_LOG_FIELDS})
     return updated
+
+
+def _realized_pnl_pct(rows: Iterable[dict[str, str]], position: PositionSnapshot) -> float | str:
+    basis = abs(float(position.entry_credit or 0.0))
+    if basis <= 0:
+        basis = abs(float(position.max_loss or 0.0))
+    if basis <= 0:
+        return ""
+    total = 0.0
+    saw_leg = False
+    for row in rows:
+        try:
+            entry = float(row.get("entry_price", ""))
+            exit_price = float(row.get("exit_price", ""))
+            qty = float(row.get("qty", 1) or 1)
+        except (TypeError, ValueError):
+            continue
+        if entry <= 0 or exit_price <= 0 or qty <= 0:
+            continue
+        side = str(row.get("side", "")).lower()
+        if side.startswith("sell"):
+            leg_pnl = (entry - exit_price) * qty * 100.0
+        else:
+            leg_pnl = (exit_price - entry) * qty * 100.0
+        total += leg_pnl
+        saw_leg = True
+    if not saw_leg:
+        return _position_pnl_pct(position)
+    return round((total / basis) * 100.0, 4)
 
 
 def _position_pnl_pct(position: PositionSnapshot) -> float | str:

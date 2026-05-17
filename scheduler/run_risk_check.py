@@ -11,7 +11,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
-from core.close_executor import close_order_plans
+from core.close_executor import close_order_plans, reconcile_pending_closes
 from core.order_executor import save_positions
 from core.risk_manager import (
     continuous_risk_checks,
@@ -28,6 +28,9 @@ def run_risk_check(*, config: dict | None = None, as_of: date | None = None, dry
     as_of = as_of or date.today()
     config, client, paths = load_runtime(config)
     positions = refresh_positions(current_positions(paths), client=client, as_of=as_of)
+    pending_close_reconciliations = reconcile_pending_closes(positions, client=client)
+    closed_positions = [position for position in positions if position.closed_at is not None]
+    positions = [position for position in positions if position.closed_at is None]
     save_positions(paths["positions"], positions)
     payload = continuous_risk_checks(
         positions,
@@ -36,6 +39,7 @@ def run_risk_check(*, config: dict | None = None, as_of: date | None = None, dry
     )
     risk_actions = config.get("risk_actions", {}) if isinstance(config, dict) else {}
     execute_closes = bool(risk_actions.get("execute_closes", False)) if isinstance(risk_actions, dict) else False
+    payload["pending_close_reconciliations"] = pending_close_reconciliations
     payload["close_orders"] = close_order_plans(
         positions,
         payload.get("actions", []),
@@ -43,7 +47,7 @@ def run_risk_check(*, config: dict | None = None, as_of: date | None = None, dry
         execute_enabled=execute_closes,
         dry_run=dry_run,
     )
-    closed_positions = [position for position in positions if position.closed_at is not None]
+    closed_positions.extend(position for position in positions if position.closed_at is not None)
     if execute_closes and not dry_run:
         for position in closed_positions:
             mark_strategy_closed(

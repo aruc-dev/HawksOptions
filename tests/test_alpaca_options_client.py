@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 from unittest.mock import patch
 
 import core.alpaca_options_client as client_module
@@ -14,6 +14,7 @@ class _Quote:
     def __init__(self, bid_price: float, ask_price: float):
         self.bid_price = bid_price
         self.ask_price = ask_price
+        self.timestamp = datetime.now(timezone.utc)
 
 
 class _LatestQuoteRequest:
@@ -82,6 +83,7 @@ class AlpacaOptionsClientTests(unittest.TestCase):
         self.assertEqual(quotes["SPY260619P00500000"]["bid"], 1.2)
         self.assertEqual(quotes["SPY260619P00500000"]["ask"], 1.4)
         self.assertEqual(quotes["SPY260619P00500000"]["source"], "alpaca_option_latest_quote")
+        self.assertIn("timestamp", quotes["SPY260619P00500000"])
 
     def test_live_market_volatility_snapshot_uses_configured_symbol_quote(self):
         config = load_config()

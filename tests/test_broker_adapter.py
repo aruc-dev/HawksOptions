@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -52,8 +52,9 @@ class FakeBroker:
         return [_order().legs[0].contract]
 
     def get_option_quotes(self, symbols: list[str]) -> dict[str, dict[str, Any]]:
+        timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
         return {
-            symbol: {"bid": 1.0, "ask": 1.1, "source": "fake_broker"}
+            symbol: {"bid": 1.0, "ask": 1.1, "source": "fake_broker", "timestamp": timestamp}
             for symbol in symbols
         }
 

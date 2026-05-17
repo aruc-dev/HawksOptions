@@ -72,13 +72,15 @@ def close_order_plans(
     dry_run: bool,
 ) -> list[dict[str, Any]]:
     positions_by_id = {position.strategy_id: position for position in positions}
-    plans = []
+    plans = reconcile_pending_closes(positions_by_id.values(), client=client)
     for action in _dedupe_close_actions(actions, positions_by_id):
         action_name = str(action.get("action", ""))
         strategy_id = str(action.get("strategy_id", ""))
         if action_name not in CLOSE_ACTIONS or strategy_id not in positions_by_id:
             continue
         position = positions_by_id[strategy_id]
+        if position.closed_at is not None:
+            continue
         pending_state = _pending_close_state(position, client)
         if pending_state in {"active", "closed"}:
             plans.append(
@@ -118,6 +120,37 @@ def close_order_plans(
     return plans
 
 
+def reconcile_pending_closes(
+    positions: Iterable[PositionSnapshot],
+    *,
+    client: Any,
+) -> list[dict[str, Any]]:
+    plans = []
+    for position in positions:
+        if not position.pending_close_order_id:
+            continue
+        order_id = position.pending_close_order_id
+        action_name = position.pending_close_action
+        state = _pending_close_state(position, client)
+        if state != "closed":
+            continue
+        plans.append(
+            {
+                "strategy_id": position.strategy_id,
+                "action": action_name,
+                "dry_run": True,
+                "execute_enabled": False,
+                "payload": {},
+                "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "result": {
+                    "status": "reconciled_closed",
+                    "order_id": position.close_order_id or order_id,
+                },
+            }
+        )
+    return plans
+
+
 def _dedupe_close_actions(
     actions: Iterable[dict[str, Any]],
     positions_by_id: dict[str, PositionSnapshot],
@@ -147,7 +180,7 @@ def _mark_pending_close(position: PositionSnapshot, action_name: str, result: An
     status = str(result.get("status", "")).lower()
     order_id = str(result.get("id") or result.get("order_id") or "")
     if status == "filled" and order_id:
-        _mark_closed(position, order_id=order_id, action_name=action_name)
+        _mark_closed(position, order_id=order_id, action_name=action_name, result=result)
         return
     if status not in ACTIVE_PENDING_CLOSE_STATUSES or not order_id:
         return
@@ -159,9 +192,14 @@ def _mark_pending_close(position: PositionSnapshot, action_name: str, result: An
 def _pending_close_state(position: PositionSnapshot, client: Any) -> str:
     if not position.pending_close_order_id:
         return "inactive"
-    status = _pending_close_status(position.pending_close_order_id, client)
+    status, result = _pending_close_status(position.pending_close_order_id, client)
     if status == "filled":
-        _mark_closed(position, order_id=position.pending_close_order_id, action_name=position.pending_close_action)
+        _mark_closed(
+            position,
+            order_id=position.pending_close_order_id,
+            action_name=position.pending_close_action,
+            result=result,
+        )
         return "closed"
     if status == "__lookup_failed__":
         return "active"
@@ -176,7 +214,7 @@ def _pending_close_state(position: PositionSnapshot, client: Any) -> str:
     return "inactive"
 
 
-def _pending_close_status(order_id: str, client: Any) -> str:
+def _pending_close_status(order_id: str, client: Any) -> tuple[str, Any]:
     has_status_getter = False
     for method_name in ("get_order_status", "get_order"):
         getter = getattr(client, method_name, None)
@@ -186,17 +224,22 @@ def _pending_close_status(order_id: str, client: Any) -> str:
         try:
             raw = getter(order_id)
         except Exception:
-            return "__lookup_failed__"
+            return "__lookup_failed__", None
         if isinstance(raw, str):
-            return raw.lower()
+            if raw:
+                return raw.lower(), raw
+            continue
         if isinstance(raw, dict):
-            return str(raw.get("status", "")).lower()
+            status = str(raw.get("status", "")).lower()
+            if status:
+                return status, raw
+            continue
         status = getattr(raw, "status", "")
         if status:
-            return str(status).lower()
+            return str(status).lower(), raw
     if not has_status_getter:
-        return "__lookup_failed__"
-    return ""
+        return "__lookup_failed__", None
+    return "", None
 
 
 def _pending_close_is_recent(position: PositionSnapshot) -> bool:
@@ -214,11 +257,33 @@ def _clear_pending_close(position: PositionSnapshot) -> None:
     position.pending_close_submitted_at = None
 
 
-def _mark_closed(position: PositionSnapshot, *, order_id: str, action_name: str) -> None:
+def _mark_closed(position: PositionSnapshot, *, order_id: str, action_name: str, result: Any = None) -> None:
     position.closed_at = datetime.now(timezone.utc)
     position.close_order_id = order_id
     position.close_action = action_name
+    close_fill_prices = _close_fill_prices(result)
+    if close_fill_prices:
+        position.close_fill_prices = close_fill_prices
     _clear_pending_close(position)
+
+
+def _close_fill_prices(result: Any) -> dict[str, float]:
+    if result is None:
+        return {}
+    legs = result.get("legs") if isinstance(result, dict) else getattr(result, "legs", None)
+    if not isinstance(legs, list):
+        return {}
+    out: dict[str, float] = {}
+    for leg in legs:
+        symbol = str(leg.get("symbol") or leg.get("contract_symbol") or "") if isinstance(leg, dict) else str(getattr(leg, "symbol", "") or getattr(leg, "contract_symbol", ""))
+        raw_price = leg.get("filled_avg_price", leg.get("avg_price")) if isinstance(leg, dict) else getattr(leg, "filled_avg_price", getattr(leg, "avg_price", None))
+        try:
+            price = float(raw_price)
+        except (TypeError, ValueError):
+            continue
+        if symbol and price > 0:
+            out[symbol] = price
+    return out
 
 
 def _closing_leg_payload(leg) -> dict[str, Any]:

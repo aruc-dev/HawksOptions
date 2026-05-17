@@ -149,7 +149,7 @@ def pre_trade_check(
         if _vix_scaling_requires_market_context(order, gates, account):
             reasons.append("vix_unavailable_for_iv_rank_scaling")
         short_premium_iv_rank = _short_premium_iv_rank_threshold(order, gates, account)
-        if order.iv_rank < short_premium_iv_rank:
+        if order.iv_rank <= short_premium_iv_rank:
             reasons.append("iv_rank_too_low_for_short_premium")
     if order.net_opening_credit < 0 and order.iv_rank > float(gates.get("max_iv_rank_for_long_premium", 40)):
         reasons.append("iv_rank_too_high_for_long_premium")
