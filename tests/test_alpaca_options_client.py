@@ -61,12 +61,16 @@ class AlpacaOptionsClientTests(unittest.TestCase):
         chain = client.get_option_chain("SPY", as_of=date(2026, 4, 23))
         self.assertGreater(len(chain), 100)
 
-    def test_sample_option_quotes_include_deterministic_timestamp(self):
+    def test_sample_option_quotes_include_fresh_timestamp(self):
         client = AlpacaOptionsClient(load_config(), use_sample_data=True)
         symbol = client.get_option_chain("SPY", as_of=date.today())[0].contract_symbol
+        before = datetime.now(timezone.utc)
         quotes = client.get_option_quotes([symbol])
+        after = datetime.now(timezone.utc)
+        timestamp = datetime.fromisoformat(quotes[symbol]["timestamp"])
 
-        self.assertEqual(quotes[symbol]["timestamp"], f"{date.today().isoformat()}T16:00:00+00:00")
+        self.assertGreaterEqual(timestamp, before.replace(microsecond=0))
+        self.assertLessEqual(timestamp, after)
 
     def test_sample_snapshot_includes_iv_percentile(self):
         client = AlpacaOptionsClient(load_config(), use_sample_data=True)

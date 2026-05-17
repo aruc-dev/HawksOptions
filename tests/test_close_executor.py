@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import tempfile
 import unittest
 from datetime import date, datetime, timedelta, timezone
@@ -7,7 +8,7 @@ from pathlib import Path
 
 from core.close_executor import build_close_order_payload, close_order_plans
 from core.models import OptionContract, OrderLeg, PositionSnapshot
-from core.trade_log import append_trade_rows, mark_strategy_closed, read_trade_rows
+from core.trade_log import TRADE_LOG_FIELDS, append_trade_rows, mark_strategy_closed, read_trade_rows
 
 
 def _position(*, qty: int = 1) -> PositionSnapshot:
@@ -480,6 +481,32 @@ class CloseExecutorTests(unittest.TestCase):
         self.assertEqual(rows[0]["exit_price"], "0.5")
         self.assertEqual(rows[1]["exit_price"], "0.4")
         self.assertEqual(rows[0]["pnl_pct"], "50.0")
+
+    def test_append_trade_rows_keeps_old_header_columns_aligned(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "trades.csv"
+            old_fields = [field for field in TRADE_LOG_FIELDS if field != "close_timestamp"]
+            with path.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=old_fields)
+                writer.writeheader()
+            append_trade_rows(
+                path,
+                [
+                    {
+                        "timestamp": "2026-04-23T10:00:00+00:00",
+                        "mode": "paper",
+                        "strategy": "vertical_spread",
+                        "status": "open",
+                        "close_timestamp": "",
+                    }
+                ],
+            )
+            with path.open(newline="", encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+
+        self.assertEqual(rows[0]["mode"], "paper")
+        self.assertEqual(rows[0]["strategy"], "vertical_spread")
+        self.assertEqual(rows[0]["status"], "open")
 
 
 if __name__ == "__main__":

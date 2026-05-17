@@ -302,7 +302,7 @@ class AlpacaOptionsClient:
                 contract.contract_symbol: contract
                 for contract in self.get_option_chain(underlying, as_of=today)
             }
-            timestamp = datetime.combine(today, datetime.min.time(), tzinfo=timezone.utc).replace(hour=16).isoformat(timespec="seconds")
+            timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
             for contract_symbol in contract_symbols:
                 contract = chain.get(contract_symbol)
                 if contract is None:

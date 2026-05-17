@@ -53,6 +53,22 @@ class DashboardPnlTests(unittest.TestCase):
         self.assertEqual(summary[0]["leg_count"], 1)
         self.assertEqual(summary[0]["average_slippage_dollars"], 2.5)
 
+    def test_slippage_summary_uses_entry_timestamp_for_closed_rows(self):
+        now = datetime(2026, 4, 23, tzinfo=timezone.utc)
+        rows = [
+            {
+                "timestamp": "2026-03-01T12:00:00+00:00",
+                "close_timestamp": "2026-04-22T12:00:00+00:00",
+                "status": "closed",
+                "strategy": "iron_condor",
+                "leg_slippage_dollars": "2.50",
+            },
+        ]
+
+        summary = pnl.slippage_summary(rows, lookback_days=7, now_utc=now)
+
+        self.assertEqual(summary, [])
+
 
 if __name__ == "__main__":
     unittest.main()

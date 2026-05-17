@@ -14,7 +14,6 @@ from core.models import PositionSnapshot
 
 TRADE_LOG_FIELDS = [
     "timestamp",
-    "close_timestamp",
     "mode",
     "strategy",
     "underlying",
@@ -49,6 +48,7 @@ TRADE_LOG_FIELDS = [
     "order_duration_seconds",
     "partial_fill",
     "retry_count",
+    "close_timestamp",
 ]
 
 

@@ -32,6 +32,10 @@ def _row_event_timestamp(row: dict[str, Any]) -> datetime | None:
     return _parse_iso(str(row.get("timestamp", "")))
 
 
+def _row_entry_timestamp(row: dict[str, Any]) -> datetime | None:
+    return _parse_iso(str(row.get("timestamp", "")))
+
+
 def realized_pnl_for_row(row: dict[str, Any]) -> float:
     entry = _float(row.get("entry_price"))
     exit_price = _float(row.get("exit_price"))
@@ -123,7 +127,7 @@ def slippage_summary(rows: Iterable[dict[str, Any]], *, lookback_days: int = 30,
     cutoff = now_utc - timedelta(days=max(1, int(lookback_days)))
     buckets: dict[str, dict[str, Any]] = defaultdict(lambda: {"strategy": "unknown", "leg_count": 0, "total_slippage_dollars": 0.0})
     for row in rows:
-        ts = _row_event_timestamp(row)
+        ts = _row_entry_timestamp(row)
         if ts is None or ts < cutoff:
             continue
         slippage = _float(row.get("leg_slippage_dollars"), default=None)
