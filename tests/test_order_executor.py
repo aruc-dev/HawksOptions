@@ -84,6 +84,11 @@ class _LiveQuoteFallbackClient:
         return {"id": "live-1", "status": "accepted", "payload": payload}
 
 
+class _ProviderErrorQuoteClient:
+    def get_option_quotes(self, symbols):
+        raise TimeoutError("provider unavailable")
+
+
 class _LiveQuoteSubmitClient(_QuoteClient):
     def __init__(self):
         self.payloads = []
@@ -193,6 +198,15 @@ class OrderExecutorTests(unittest.TestCase):
         self.assertFalse(quality["partial_fill"])
         self.assertEqual(quality["retry_count"], 0)
         self.assertEqual(len(quality["legs"]), 2)
+        self.assertIn("execution_quality", order.metadata)
+
+    def test_dry_run_execution_falls_back_when_nbbo_provider_fails(self):
+        order = _order()
+        result = execute_order(_ProviderErrorQuoteClient(), order, dry_run=True)
+
+        self.assertEqual(result["status"], "accepted")
+        self.assertEqual(result["nbbo_snapshot"]["warning"], "nbbo_capture_failed_dry_run_fallback")
+        self.assertEqual(result["nbbo_snapshot"]["legs"][0]["source"], "order_contract")
         self.assertIn("execution_quality", order.metadata)
 
     def test_execution_quality_uses_nbbo_snapshot_midpoints(self):

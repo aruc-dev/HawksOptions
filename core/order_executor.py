@@ -51,7 +51,27 @@ def execute_order(
     dry_run: bool = True,
     config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    nbbo_snapshot = capture_nbbo_snapshot(client, order)
+    try:
+        nbbo_snapshot = capture_nbbo_snapshot(client, order)
+    except Exception as exc:
+        if not dry_run:
+            raise
+        nbbo_snapshot = {
+            "captured_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "legs": [
+                {
+                    "contract_symbol": leg.contract.contract_symbol,
+                    "bid": round(float(leg.contract.bid), 4),
+                    "ask": round(float(leg.contract.ask), 4),
+                    "midpoint": float(leg.contract.mid_price()),
+                    "source": "order_contract",
+                }
+                for leg in order.legs
+            ],
+            "warning": "nbbo_capture_failed_dry_run_fallback",
+            "reason": str(exc),
+        }
+        order.metadata["nbbo_snapshot"] = nbbo_snapshot
     limit_plan = limit_price_improvement_plan(order, config=config)
     order.metadata["limit_price_improvement"] = limit_plan
     payload = build_order_payload(order, config=config)

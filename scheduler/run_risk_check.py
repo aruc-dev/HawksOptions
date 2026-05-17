@@ -31,7 +31,6 @@ def run_risk_check(*, config: dict | None = None, as_of: date | None = None, dry
     pending_close_reconciliations = reconcile_pending_closes(positions, client=client)
     closed_positions = [position for position in positions if position.closed_at is not None]
     positions = [position for position in positions if position.closed_at is None]
-    save_positions(paths["positions"], positions)
     payload = continuous_risk_checks(
         positions,
         config=config,
@@ -48,7 +47,7 @@ def run_risk_check(*, config: dict | None = None, as_of: date | None = None, dry
         dry_run=dry_run,
     )
     closed_positions.extend(position for position in positions if position.closed_at is not None)
-    if execute_closes and not dry_run:
+    if not dry_run:
         for position in closed_positions:
             mark_strategy_closed(
                 paths["trade_log"],
@@ -57,7 +56,7 @@ def run_risk_check(*, config: dict | None = None, as_of: date | None = None, dry
                 closed_at=position.closed_at,
             )
     positions = [position for position in positions if position.closed_at is None]
-    if execute_closes and not dry_run and payload["close_orders"]:
+    if not dry_run:
         save_positions(paths["positions"], positions)
     baseline = read_daily_baseline(paths["baseline"])
     if baseline is None or baseline.get("date") != as_of.isoformat():

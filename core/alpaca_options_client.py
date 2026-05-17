@@ -348,7 +348,7 @@ class AlpacaOptionsClient:
 
     def _get_live_market_volatility_snapshot(self, as_of: date | None = None) -> dict[str, Any]:
         as_of = as_of or date.today()
-        symbol = str(self.config.get("market_data", {}).get("vix_symbol", "VIX")).strip() or "VIX"
+        symbol = str(self.config.get("market_data", {}).get("vix_symbol", "VIXY")).strip() or "VIXY"
         try:
             client = self._get_stock_data_client()
         except Exception as exc:

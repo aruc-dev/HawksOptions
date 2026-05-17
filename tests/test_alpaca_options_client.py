@@ -100,6 +100,11 @@ class AlpacaOptionsClientTests(unittest.TestCase):
         self.assertEqual(snapshot["source"], "alpaca_stock_latest_quote")
         self.assertEqual(snapshot["symbol"], "VIX")
 
+    def test_default_live_market_volatility_symbol_uses_tradable_proxy(self):
+        config = load_config()
+
+        self.assertEqual(config["market_data"]["vix_symbol"], "VIXY")
+
     def test_live_market_volatility_snapshot_returns_unavailable_on_provider_error(self):
         config = load_config()
         config["market_data"]["vix_symbol"] = "VIX"
