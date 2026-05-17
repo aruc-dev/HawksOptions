@@ -58,17 +58,32 @@ def run_risk_check(*, config: dict | None = None, as_of: date | None = None, dry
     positions = [position for position in positions if position.closed_at is None]
     if not dry_run:
         save_positions(paths["positions"], positions)
+    account = client.get_account()
     baseline = read_daily_baseline(paths["baseline"])
     if baseline is None or baseline.get("date") != as_of.isoformat():
-        baseline = write_daily_baseline(paths["baseline"], client.get_account()["portfolio_value"], as_of=datetime.combine(as_of, time(13, 31), tzinfo=timezone.utc))
+        if dry_run:
+            baseline = {
+                "date": as_of.isoformat(),
+                "portfolio_value": float(account["portfolio_value"]),
+                "timestamp": datetime.combine(as_of, time(13, 31), tzinfo=timezone.utc).isoformat(timespec="seconds"),
+            }
+        else:
+            baseline = write_daily_baseline(
+                paths["baseline"],
+                account["portfolio_value"],
+                as_of=datetime.combine(as_of, time(13, 31), tzinfo=timezone.utc),
+            )
     payload["daily_loss"] = daily_loss_status(
         float(baseline["portfolio_value"]),
-        float(client.get_account()["portfolio_value"]),
+        float(account["portfolio_value"]),
         halt_pct=float(config.get("account", {}).get("daily_loss_halt_pct", 0.05)),
         hard_close_pct=float(config.get("account", {}).get("tail_risk_close_pct", 0.08)),
     )
-    snapshot_path = write_greeks_snapshot(paths["greeks_dir"], payload, as_of=datetime.now(timezone.utc))
-    payload["snapshot_path"] = str(snapshot_path)
+    if dry_run:
+        payload["snapshot_path"] = ""
+    else:
+        snapshot_path = write_greeks_snapshot(paths["greeks_dir"], payload, as_of=datetime.now(timezone.utc))
+        payload["snapshot_path"] = str(snapshot_path)
     return payload
 
 

@@ -474,13 +474,53 @@ class CloseExecutorTests(unittest.TestCase):
 
         self.assertEqual(updated, 2)
         self.assertTrue(all(row["status"] == "closed" for row in rows))
-        self.assertTrue(all(row["order_id"] == "close-1" for row in rows))
+        self.assertTrue(all(row["order_id"] == "open-1" for row in rows))
+        self.assertTrue(all(row["close_order_id"] == "close-1" for row in rows))
         self.assertTrue(all(row["exit_reason"] == "take_profit" for row in rows))
         self.assertTrue(all(row["timestamp"] == "2026-04-23T10:00:00+00:00" for row in rows))
         self.assertTrue(all(row["close_timestamp"] == "2026-04-24T10:00:00+00:00" for row in rows))
         self.assertEqual(rows[0]["exit_price"], "0.5")
         self.assertEqual(rows[1]["exit_price"], "0.4")
         self.assertEqual(rows[0]["pnl_pct"], "50.0")
+
+    def test_mark_strategy_closed_leaves_exit_blank_without_broker_fill_prices(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "trades.csv"
+            append_trade_rows(
+                path,
+                [
+                    {
+                        "timestamp": "2026-04-23T10:00:00+00:00",
+                        "strategy_id": "vertical_spread-SPY-20260423",
+                        "leg_number": 1,
+                        "contract_symbol": "SPY260619P00500000",
+                        "side": "sell_to_open",
+                        "qty": 1,
+                        "entry_price": 1.05,
+                        "order_id": "open-1",
+                        "status": "open",
+                    },
+                ],
+            )
+            position = _position()
+            position.current_pnl = 999.0
+            position.closed_at = datetime(2026, 4, 24, 10, 0, tzinfo=timezone.utc)
+            position.close_order_id = "close-1"
+            position.close_fill_prices = {}
+
+            updated = mark_strategy_closed(
+                path,
+                position,
+                exit_reason="take_profit",
+                closed_at=position.closed_at,
+            )
+            rows = read_trade_rows(path)
+
+        self.assertEqual(updated, 1)
+        self.assertEqual(rows[0]["order_id"], "open-1")
+        self.assertEqual(rows[0]["close_order_id"], "close-1")
+        self.assertEqual(rows[0]["exit_price"], "")
+        self.assertEqual(rows[0]["pnl_pct"], "")
 
     def test_append_trade_rows_keeps_old_header_columns_aligned(self):
         with tempfile.TemporaryDirectory() as tmp:

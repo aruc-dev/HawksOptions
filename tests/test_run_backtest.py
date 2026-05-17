@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
 from datetime import date, datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from core.backtest_engine import (
     _apply_entry_slippage,
@@ -46,6 +48,27 @@ class _StaticChainClient:
         return {"symbol": underlying, "price": self._price}
 
 
+class _CountingMarketContextClient(_StaticChainClient):
+    def __init__(self):
+        super().__init__([])
+        self.market_context_calls = 0
+
+    def get_underlying_snapshot(self, underlying: str, as_of=None) -> dict:
+        return {
+            "symbol": underlying,
+            "price": self._price,
+            "iv_rank": 50.0,
+            "current_iv": 0.25,
+            "iv_percentile": 55.0,
+            "realized_vol_20d": 0.2,
+            "atr_pct": 0.02,
+        }
+
+    def get_market_volatility_snapshot(self, *, as_of=None) -> dict:
+        self.market_context_calls += 1
+        return {"vix": 18.0, "scale": "index", "source": "test"}
+
+
 class RunBacktestTests(unittest.TestCase):
     def test_backtest_executes_trades(self):
         config = load_config()
@@ -67,6 +90,34 @@ class RunBacktestTests(unittest.TestCase):
         self.assertIn("## Data Provenance", report_path.read_text(encoding="utf-8"))
         self.assertIn("## Metrics", report_path.read_text(encoding="utf-8"))
         self.assertIn("strategy_attribution_10d.md", report_path.read_text(encoding="utf-8"))
+
+    def test_backtest_skips_market_context_when_vix_scaling_disabled(self):
+        config = load_config()
+        config["gates"]["vix_iv_rank_scaling"]["enabled"] = False
+        client = _CountingMarketContextClient()
+        with tempfile.TemporaryDirectory() as tmp:
+            config["reporting"]["reports_dir"] = tmp
+            with (
+                patch("core.backtest_engine.backtest_market_data_client", return_value=client),
+                patch("core.backtest_engine.load_underlyings", return_value=[{"symbol": "SPY"}]),
+            ):
+                run_backtest(config=config, strategies=[], days=1, starting_fund=10000.0, start_date=date(2026, 4, 23))
+
+        self.assertEqual(client.market_context_calls, 0)
+
+    def test_backtest_fetches_market_context_when_vix_scaling_enabled(self):
+        config = load_config()
+        config["gates"]["vix_iv_rank_scaling"]["enabled"] = True
+        client = _CountingMarketContextClient()
+        with tempfile.TemporaryDirectory() as tmp:
+            config["reporting"]["reports_dir"] = tmp
+            with (
+                patch("core.backtest_engine.backtest_market_data_client", return_value=client),
+                patch("core.backtest_engine.load_underlyings", return_value=[{"symbol": "SPY"}]),
+            ):
+                run_backtest(config=config, strategies=[], days=1, starting_fund=10000.0, start_date=date(2026, 4, 23))
+
+        self.assertEqual(client.market_context_calls, 1)
 
     def test_attribution_report_groups_strategy_and_symbol_metrics(self):
         attribution = _attribution_report(

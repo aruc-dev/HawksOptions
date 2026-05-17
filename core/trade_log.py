@@ -49,6 +49,7 @@ TRADE_LOG_FIELDS = [
     "partial_fill",
     "retry_count",
     "close_timestamp",
+    "close_order_id",
 ]
 
 
@@ -94,11 +95,7 @@ def mark_strategy_closed(
     closed_at = closed_at or position.closed_at or datetime.now(timezone.utc)
     if closed_at.tzinfo is None:
         closed_at = closed_at.replace(tzinfo=timezone.utc)
-    exit_prices = {
-        leg.contract.contract_symbol: round(float(leg.contract.mid_price()), 4)
-        for leg in position.legs
-    }
-    exit_prices.update(position.close_fill_prices)
+    exit_prices = position.close_fill_prices
     updated_rows = []
     updated = 0
     with locked_open(path, "r+", lock="exclusive", newline="") as handle:
@@ -112,7 +109,7 @@ def mark_strategy_closed(
             row["close_timestamp"] = closed_at.isoformat(timespec="seconds")
             row["exit_price"] = _csv_text(exit_prices.get(symbol, ""))
             row["exit_reason"] = exit_reason
-            row["order_id"] = position.close_order_id or row.get("order_id", "")
+            row["close_order_id"] = position.close_order_id
             row["status"] = "closed"
             updated_rows.append(row)
             updated += 1
@@ -154,7 +151,7 @@ def _realized_pnl_pct(rows: Iterable[dict[str, str]], position: PositionSnapshot
         total += leg_pnl
         saw_leg = True
     if not saw_leg:
-        return _position_pnl_pct(position)
+        return ""
     return round((total / basis) * 100.0, 4)
 
 
