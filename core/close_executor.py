@@ -8,6 +8,7 @@ from math import gcd
 from typing import Any, Iterable
 
 from core.models import PositionSnapshot
+from core.nbbo import capture_nbbo_snapshot, has_complete_client_nbbo
 
 
 CLOSE_ACTIONS = {
@@ -105,6 +106,10 @@ def close_order_plans(
             "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
         if execute_enabled and not dry_run:
+            nbbo_snapshot = capture_nbbo_snapshot(client, position)
+            plan["nbbo_snapshot"] = nbbo_snapshot
+            if not has_complete_client_nbbo(nbbo_snapshot):
+                raise RuntimeError("fresh_nbbo_required_for_live_close")
             plan["result"] = client.submit_order(payload)
             _mark_pending_close(position, action_name, plan["result"])
         else:
@@ -172,10 +177,12 @@ def _pending_close_state(position: PositionSnapshot, client: Any) -> str:
 
 
 def _pending_close_status(order_id: str, client: Any) -> str:
+    has_status_getter = False
     for method_name in ("get_order_status", "get_order"):
         getter = getattr(client, method_name, None)
         if not callable(getter):
             continue
+        has_status_getter = True
         try:
             raw = getter(order_id)
         except Exception:
@@ -187,6 +194,8 @@ def _pending_close_status(order_id: str, client: Any) -> str:
         status = getattr(raw, "status", "")
         if status:
             return str(status).lower()
+    if not has_status_getter:
+        return "__lookup_failed__"
     return ""
 
 

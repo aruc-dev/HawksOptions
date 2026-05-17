@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from core.broker_adapter import OrderSubmissionClient
+from core.broker_adapter import OrderExecutionClient
 from core.execution_quality import execution_quality_summary
 from core.file_lock import atomic_write_text, lock_path_for, locked_open
 from core.limit_price import initial_limit_price, limit_price_improvement_plan
@@ -45,7 +45,7 @@ def build_order_payload(order: StrategyOrder, *, config: dict[str, Any] | None =
 
 
 def execute_order(
-    client: OrderSubmissionClient,
+    client: OrderExecutionClient,
     order: StrategyOrder,
     *,
     dry_run: bool = True,

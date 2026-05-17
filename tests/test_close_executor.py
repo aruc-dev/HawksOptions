@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 from core.close_executor import build_close_order_payload, close_order_plans
 from core.models import OptionContract, OrderLeg, PositionSnapshot
+from core.trade_log import append_trade_rows, mark_strategy_closed, read_trade_rows
 
 
 def _position(*, qty: int = 1) -> PositionSnapshot:
@@ -110,6 +113,24 @@ class _Client:
             raise status
         return status
 
+    def get_option_quotes(self, symbols):
+        return {
+            symbol: {"bid": 1.0, "ask": 1.1, "source": "test_quote"}
+            for symbol in symbols
+        }
+
+
+class _NoStatusClient(_Client):
+    get_order_status = None
+
+
+class _InvalidQuoteClient(_Client):
+    def get_option_quotes(self, symbols):
+        return {
+            symbol: {"bid": 0.0, "ask": 0.0, "source": "bad_quote"}
+            for symbol in symbols
+        }
+
 
 class CloseExecutorTests(unittest.TestCase):
     def test_build_close_order_payload_uses_broker_close_sides(self):
@@ -149,6 +170,19 @@ class CloseExecutorTests(unittest.TestCase):
         self.assertEqual(len(client.payloads), 1)
         self.assertEqual(position.pending_close_order_id, "close-1")
         self.assertEqual(position.pending_close_action, "take_profit")
+        self.assertIn("nbbo_snapshot", plans[0])
+
+    def test_close_order_plans_requires_fresh_nbbo_for_live_close(self):
+        client = _InvalidQuoteClient()
+        with self.assertRaisesRegex(RuntimeError, "fresh_nbbo_required_for_live_close"):
+            close_order_plans(
+                [_position()],
+                [{"strategy_id": "vertical_spread-SPY-20260423", "action": "take_profit"}],
+                client=client,
+                execute_enabled=True,
+                dry_run=False,
+            )
+        self.assertEqual(client.payloads, [])
 
     def test_build_close_order_payload_normalizes_limit_by_position_quantity(self):
         payload = build_close_order_payload(_position(qty=3))
@@ -266,6 +300,24 @@ class CloseExecutorTests(unittest.TestCase):
         self.assertEqual(client.payloads, [])
         self.assertEqual(position.pending_close_order_id, "close-pending")
 
+    def test_close_order_plans_keep_pending_active_without_status_api(self):
+        client = _NoStatusClient()
+        position = _position()
+        position.pending_close_order_id = "close-pending"
+        position.pending_close_submitted_at = datetime.now(timezone.utc) - timedelta(minutes=30)
+
+        plans = close_order_plans(
+            [position],
+            [{"strategy_id": "vertical_spread-SPY-20260423", "action": "stop_loss"}],
+            client=client,
+            execute_enabled=True,
+            dry_run=False,
+        )
+
+        self.assertEqual(plans[0]["result"]["status"], "skipped_pending_close")
+        self.assertEqual(client.payloads, [])
+        self.assertEqual(position.pending_close_order_id, "close-pending")
+
     def test_close_order_plans_mark_filled_pending_close_as_closed(self):
         client = _Client()
         client.statuses["close-pending"] = "filled"
@@ -327,6 +379,57 @@ class CloseExecutorTests(unittest.TestCase):
         self.assertEqual(loaded.close_order_id, "close-1")
         self.assertEqual(loaded.close_action, "take_profit")
         self.assertIsNotNone(loaded.closed_at)
+
+    def test_mark_strategy_closed_updates_open_trade_log_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "trades.csv"
+            append_trade_rows(
+                path,
+                [
+                    {
+                        "timestamp": "2026-04-23T10:00:00+00:00",
+                        "strategy_id": "vertical_spread-SPY-20260423",
+                        "leg_number": 1,
+                        "contract_symbol": "SPY260619P00500000",
+                        "side": "sell_to_open",
+                        "qty": 1,
+                        "entry_price": 1.05,
+                        "order_id": "open-1",
+                        "status": "open",
+                    },
+                    {
+                        "timestamp": "2026-04-23T10:00:00+00:00",
+                        "strategy_id": "vertical_spread-SPY-20260423",
+                        "leg_number": 2,
+                        "contract_symbol": "SPY260619P00499000",
+                        "side": "buy_to_open",
+                        "qty": 1,
+                        "entry_price": 0.85,
+                        "order_id": "open-1",
+                        "status": "open",
+                    },
+                ],
+            )
+            position = _position()
+            position.current_pnl = 10.0
+            position.closed_at = datetime(2026, 4, 24, 10, 0, tzinfo=timezone.utc)
+            position.close_order_id = "close-1"
+
+            updated = mark_strategy_closed(
+                path,
+                position,
+                exit_reason="take_profit",
+                closed_at=position.closed_at,
+            )
+            rows = read_trade_rows(path)
+
+        self.assertEqual(updated, 2)
+        self.assertTrue(all(row["status"] == "closed" for row in rows))
+        self.assertTrue(all(row["order_id"] == "close-1" for row in rows))
+        self.assertTrue(all(row["exit_reason"] == "take_profit" for row in rows))
+        self.assertEqual(rows[0]["exit_price"], "1.05")
+        self.assertEqual(rows[1]["exit_price"], "0.85")
+        self.assertEqual(rows[0]["pnl_pct"], "50.0")
 
 
 if __name__ == "__main__":

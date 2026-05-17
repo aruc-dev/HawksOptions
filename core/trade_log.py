@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import csv
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
 from core.file_lock import locked_open
+from core.models import PositionSnapshot
 
 
 TRADE_LOG_FIELDS = [
@@ -72,6 +73,68 @@ def append_trade_rows(path: Path, rows: Iterable[dict[str, object]]) -> None:
         for row in rows:
             payload = {field: row.get(field, "") for field in TRADE_LOG_FIELDS}
             writer.writerow(payload)
+
+
+def mark_strategy_closed(
+    path: Path,
+    position: PositionSnapshot,
+    *,
+    exit_reason: str,
+    closed_at: datetime | None = None,
+) -> int:
+    """Mark persisted trade-log rows for a filled close as closed.
+
+    The trade log is leg-based. Updating all open rows for the strategy keeps
+    dashboard and drift-report readers aligned with positions.json when a close
+    fill has been reconciled.
+    """
+    if not path.exists():
+        return 0
+    closed_at = closed_at or position.closed_at or datetime.now(timezone.utc)
+    if closed_at.tzinfo is None:
+        closed_at = closed_at.replace(tzinfo=timezone.utc)
+    exit_prices = {
+        leg.contract.contract_symbol: round(float(leg.contract.mid_price()), 4)
+        for leg in position.legs
+    }
+    pnl_pct = _position_pnl_pct(position)
+    updated = 0
+    with locked_open(path, "r+", lock="exclusive", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+        for row in rows:
+            if str(row.get("strategy_id", "")) != position.strategy_id:
+                continue
+            if str(row.get("status", "")).lower() not in {"open", "partially_filled"}:
+                continue
+            symbol = str(row.get("contract_symbol", ""))
+            row["timestamp"] = closed_at.isoformat(timespec="seconds")
+            row["exit_price"] = _csv_text(exit_prices.get(symbol, ""))
+            row["pnl_pct"] = _csv_text(pnl_pct)
+            row["exit_reason"] = exit_reason
+            row["order_id"] = position.close_order_id or row.get("order_id", "")
+            row["status"] = "closed"
+            updated += 1
+        if updated:
+            handle.seek(0)
+            handle.truncate(0)
+            writer = csv.DictWriter(handle, fieldnames=TRADE_LOG_FIELDS)
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({field: row.get(field, "") for field in TRADE_LOG_FIELDS})
+    return updated
+
+
+def _position_pnl_pct(position: PositionSnapshot) -> float | str:
+    basis = abs(float(position.entry_credit or 0.0))
+    if basis <= 0:
+        basis = abs(float(position.max_loss or 0.0))
+    if basis <= 0:
+        return ""
+    return round((float(position.current_pnl) / basis) * 100.0, 4)
+
+
+def _csv_text(value: object) -> object:
+    return "" if value is None else value
 
 
 def open_strategy_rows(rows: Iterable[dict[str, str]]) -> dict[str, list[dict[str, str]]]:

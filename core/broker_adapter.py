@@ -36,5 +36,11 @@ class OrderSubmissionClient(Protocol):
 
 
 @runtime_checkable
+class OrderExecutionClient(OrderSubmissionClient, Protocol):
+    def get_option_quotes(self, symbols: list[str]) -> dict[str, dict[str, Any]]:
+        ...
+
+
+@runtime_checkable
 class TradingClient(MarketDataClient, AccountClient, OrderSubmissionClient, Protocol):
     pass

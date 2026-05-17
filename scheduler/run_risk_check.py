@@ -20,6 +20,7 @@ from core.risk_manager import (
     write_daily_baseline,
     write_greeks_snapshot,
 )
+from core.trade_log import mark_strategy_closed
 from scheduler.common import current_positions, load_runtime, refresh_positions
 
 
@@ -42,6 +43,15 @@ def run_risk_check(*, config: dict | None = None, as_of: date | None = None, dry
         execute_enabled=execute_closes,
         dry_run=dry_run,
     )
+    closed_positions = [position for position in positions if position.closed_at is not None]
+    if execute_closes and not dry_run:
+        for position in closed_positions:
+            mark_strategy_closed(
+                paths["trade_log"],
+                position,
+                exit_reason=position.close_action or "risk_close",
+                closed_at=position.closed_at,
+            )
     positions = [position for position in positions if position.closed_at is None]
     if execute_closes and not dry_run and payload["close_orders"]:
         save_positions(paths["positions"], positions)

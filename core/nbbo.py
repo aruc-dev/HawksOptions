@@ -36,7 +36,9 @@ def capture_nbbo_snapshot(client: Any, order: StrategyOrder) -> dict[str, Any]:
         "captured_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "legs": legs,
     }
-    order.metadata["nbbo_snapshot"] = snapshot
+    metadata = getattr(order, "metadata", None)
+    if isinstance(metadata, dict):
+        metadata["nbbo_snapshot"] = snapshot
     return snapshot
 
 

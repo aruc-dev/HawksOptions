@@ -5,7 +5,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from core.broker_adapter import MarketDataClient, OrderSubmissionClient, TradingClient
+from core.broker_adapter import MarketDataClient, OrderExecutionClient, OrderSubmissionClient, TradingClient
 from core.models import OptionContract, OrderLeg, StrategyOrder
 from core.order_executor import execute_order
 
@@ -85,6 +85,7 @@ class BrokerAdapterTests(unittest.TestCase):
 
         self.assertIsInstance(broker, MarketDataClient)
         self.assertIsInstance(broker, OrderSubmissionClient)
+        self.assertIsInstance(broker, OrderExecutionClient)
         self.assertIsInstance(broker, TradingClient)
 
     def test_order_executor_submits_through_protocol_without_alpaca_client(self):
