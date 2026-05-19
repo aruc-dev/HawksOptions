@@ -22,6 +22,19 @@ class _LatestQuoteRequest:
         self.symbol_or_symbols = symbol_or_symbols
 
 
+class _KeywordRequest:
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+
+
+class _TimeFrame:
+    Day = "1Day"
+
+
+class _AssetStatus:
+    ACTIVE = "active"
+
+
 class _OptionDataClient:
     def __init__(self, key: str, secret: str):
         self.key = key
@@ -142,6 +155,7 @@ class AlpacaOptionsClientTests(unittest.TestCase):
             patch.dict("os.environ", {"ALPACA_OPTIONS_PAPER_API_KEY": "key", "ALPACA_OPTIONS_PAPER_SECRET_KEY": "secret"}),
             patch.object(client_module, "OptionHistoricalDataClient", _OptionDataClient),
             patch.object(client_module, "OptionLatestQuoteRequest", _LatestQuoteRequest),
+            patch.object(client_module, "OptionChainRequest", _KeywordRequest),
         ):
             client = AlpacaOptionsClient(config, use_sample_data=False)
             quotes = client.get_option_quotes(["SPY260619P00500000"])
@@ -194,7 +208,14 @@ class AlpacaOptionsClientTests(unittest.TestCase):
             patch.dict("os.environ", {"ALPACA_OPTIONS_PAPER_API_KEY": "key", "ALPACA_OPTIONS_PAPER_SECRET_KEY": "secret"}),
             patch.object(client_module, "TradingClient", _TradingClient),
             patch.object(client_module, "OptionHistoricalDataClient", _OptionChainDataClient),
+            patch.object(client_module, "OptionLatestQuoteRequest", _LatestQuoteRequest),
+            patch.object(client_module, "OptionChainRequest", _KeywordRequest),
+            patch.object(client_module, "OptionBarsRequest", _KeywordRequest),
+            patch.object(client_module, "TimeFrame", _TimeFrame),
             patch.object(client_module, "StockHistoricalDataClient", _SpyStockDataClient),
+            patch.object(client_module, "StockLatestQuoteRequest", _LatestQuoteRequest),
+            patch.object(client_module, "GetOptionContractsRequest", _KeywordRequest),
+            patch.object(client_module, "AssetStatus", _AssetStatus),
         ):
             client = AlpacaOptionsClient(config, use_sample_data=False)
             chain = client.get_option_chain("SPY", as_of=date(2026, 4, 23))
