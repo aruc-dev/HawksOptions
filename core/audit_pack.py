@@ -41,6 +41,7 @@ def _audit_candidates(*, trading_day: date, reports_dir: Path, data_files: Itera
             f"eod_{day_text}.md",
         ):
             candidates.extend(sorted(reports_dir.glob(pattern)))
+            candidates.extend(sorted(reports_dir.glob(f"{pattern}.gz")))
     return candidates
 
 

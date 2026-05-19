@@ -59,7 +59,7 @@ def _run_risk_check_with_runtime(
     )
     risk_actions = config.get("risk_actions", {}) if isinstance(config, dict) else {}
     execute_closes = bool(risk_actions.get("execute_closes", False)) if isinstance(risk_actions, dict) else False
-    allowed_auto_close_actions = risk_actions.get("allowed_auto_close_actions", ["stop_loss", "close_for_ex_div"]) if isinstance(risk_actions, dict) else []
+    allowed_auto_close_actions = _allowed_auto_close_actions(risk_actions)
     payload["pending_close_reconciliations"] = pending_close_reconciliations
     payload["close_orders"] = close_order_plans(
         positions,
@@ -110,6 +110,19 @@ def _run_risk_check_with_runtime(
         if "metrics" in paths:
             payload["metrics_path"] = str(write_metrics_textfile(paths["metrics"], risk_check_metrics(payload)))
     return payload
+
+
+def _allowed_auto_close_actions(risk_actions: object) -> list[str]:
+    if not isinstance(risk_actions, dict):
+        return []
+    if "allowed_auto_close_actions" not in risk_actions:
+        return ["stop_loss", "close_for_ex_div"]
+    configured_actions = risk_actions.get("allowed_auto_close_actions")
+    if configured_actions is None:
+        return []
+    if not isinstance(configured_actions, (list, tuple, set)):
+        return []
+    return [str(action) for action in configured_actions]
 
 
 def main(argv: list[str] | None = None) -> int:

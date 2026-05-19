@@ -464,6 +464,10 @@ class ProductionReadinessWorkflowTests(unittest.TestCase):
             scans.mkdir(parents=True)
             scan = scans / "scan_2026-04-23_120000Z.json"
             scan.write_text('{"accepted":[]}', encoding="utf-8")
+            compressed_scan = scans / "scan_2026-04-23_130000Z.json.gz"
+            compressed_scan.write_bytes(b"\x1f\x8bcompressed-scan")
+            compressed_eod = reports / "eod_2026-04-23.md.gz"
+            compressed_eod.write_bytes(b"\x1f\x8bcompressed-eod")
             trade_log = root / "data" / "trades.csv"
             trade_log.parent.mkdir()
             trade_log.write_text("timestamp,strategy_id\n", encoding="utf-8")
@@ -480,6 +484,8 @@ class ProductionReadinessWorkflowTests(unittest.TestCase):
 
         self.assertIn("manifest.sha256.json", names)
         self.assertIn("reports/candidate_scans/scan_2026-04-23_120000Z.json", names)
+        self.assertIn("reports/candidate_scans/scan_2026-04-23_130000Z.json.gz", names)
+        self.assertIn("reports/eod_2026-04-23.md.gz", names)
         self.assertIn("data/trades.csv", names)
 
 

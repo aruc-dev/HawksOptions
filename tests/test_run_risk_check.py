@@ -165,6 +165,31 @@ class RunRiskCheckTests(unittest.TestCase):
         self.assertEqual(result["daily_loss"]["status"], "halt_new_entries")
         write_greeks_snapshot.assert_not_called()
 
+    def test_null_allowed_auto_close_actions_fails_closed(self):
+        config = {
+            "risk_actions": {"execute_closes": True, "allowed_auto_close_actions": None},
+            "account": {},
+        }
+        paths = {
+            "positions": Path("positions.json"),
+            "trade_log": Path("trades.csv"),
+            "baseline": Path("baseline.json"),
+            "greeks_dir": Path("greeks"),
+        }
+        with (
+            patch("scheduler.run_risk_check.load_runtime", return_value=(config, _Client(), paths)),
+            patch("scheduler.run_risk_check.current_positions", return_value=[]),
+            patch("scheduler.run_risk_check.refresh_positions", return_value=[]),
+            patch("scheduler.run_risk_check.continuous_risk_checks", return_value={"actions": []}),
+            patch("scheduler.run_risk_check.close_order_plans", return_value=[]) as close_order_plans,
+            patch("scheduler.run_risk_check.read_daily_baseline", return_value={"date": "2026-04-23", "portfolio_value": 10000.0}),
+            patch("scheduler.run_risk_check.write_greeks_snapshot") as write_greeks_snapshot,
+        ):
+            run_risk_check(as_of=date(2026, 4, 23), dry_run=True)
+
+        self.assertEqual(close_order_plans.call_args.kwargs["allowed_auto_close_actions"], [])
+        write_greeks_snapshot.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
