@@ -15,6 +15,10 @@ from scheduler.run_scan import _market_context_for_scan, _symbol_scan_health, sc
 def _sample_scan_config() -> dict:
     config = load_config()
     config["market_data"]["use_sample_data"] = True
+    # Most scan tests validate ranking/report plumbing, not production
+    # profitability gates. Keep the fixture permissive so it produces
+    # deterministic candidates.
+    config["strategies"]["vertical_spread"]["min_credit_to_roundtrip_cost"] = 0
     return config
 
 

@@ -574,6 +574,32 @@ class StrategyTodoTests(unittest.TestCase):
 
         self.assertIsNone(VerticalSpreadStrategy(config).generate_order(context))
 
+    def test_vertical_spread_cost_gate_blocks_friction_dominated_credit(self):
+        config = deepcopy(load_config())
+        config["strategies"]["vertical_spread"]["enabled"] = True
+        config["strategies"]["vertical_spread"]["min_credit_to_width"] = 0.0
+        config["strategies"]["vertical_spread"]["min_net_credit"] = 0.0
+        config["strategies"]["vertical_spread"]["min_credit_to_roundtrip_cost"] = 1.0
+        expiration = date(2026, 5, 28)
+        chain = [
+            OptionContract("SPY260528P00095000", "SPY", "put", 95.0, expiration, 1.2, 1.24, open_interest=500, volume=50, delta=-0.25, underlying_price=100.0),
+            OptionContract("SPY260528P00090000", "SPY", "put", 90.0, expiration, 0.4, 0.42, open_interest=500, volume=50, delta=-0.10, underlying_price=100.0),
+        ]
+        context = StrategyContext(
+            underlying={"symbol": "SPY", "strategies_allowed": ["vertical_spread"], "max_contracts": 1},
+            chain=chain,
+            config=config,
+            account={"equity": 100000.0, "portfolio_value": 100000.0, "cash": 100000.0, "buying_power": 200000.0},
+            iv_rank=50.0,
+            as_of=date(2026, 4, 23),
+            underlying_price=100.0,
+            current_iv=0.30,
+        )
+
+        self.assertIsNotNone(VerticalSpreadStrategy(config).generate_order(context))
+        config["strategies"]["vertical_spread"]["min_credit_to_roundtrip_cost"] = 10.0
+        self.assertIsNone(VerticalSpreadStrategy(config).generate_order(context))
+
     def test_realized_vs_implied_volatility_spread_filter_blocks_vertical(self):
         config = deepcopy(load_config())
         config["strategies"]["vertical_spread"]["enabled"] = True

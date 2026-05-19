@@ -50,6 +50,12 @@ class VerticalSpreadStrategy(BaseStrategy):
             return None
         if not self.credit_quality_passes(credit=credit, width=width):
             return None
+        legs = [
+            OrderLeg(contract=short_leg, side="sell_to_open", qty=1),
+            OrderLeg(contract=long_leg, side="buy_to_open", qty=1),
+        ]
+        if not self.cost_adjusted_credit_passes(credit=credit, legs=legs):
+            return None
         qty = self.risk_scaled_order_quantity(context, unit_max_loss=width - credit)
         if qty <= 0:
             return None
@@ -57,10 +63,7 @@ class VerticalSpreadStrategy(BaseStrategy):
             strategy_name=self.name,
             strategy_id=self.strategy_id(context),
             underlying=context.underlying["symbol"],
-            legs=[
-                OrderLeg(contract=short_leg, side="sell_to_open", qty=1),
-                OrderLeg(contract=long_leg, side="buy_to_open", qty=1),
-            ],
+            legs=legs,
             max_loss=round(width - credit, 2),
             max_profit=credit,
             required_buying_power=round(width - credit, 2),
