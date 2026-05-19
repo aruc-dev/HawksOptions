@@ -2,7 +2,7 @@
 
 **Reviewer:** Independent audit
 **Date:** 2026-05-18
-**Scope:** Local working tree at `/Users/arunbabuchandrababu/Desktop/HawksTradeOperations/HawksOptions`
+**Scope:** Local repository checkout
 **Method:** Module-by-module read of `core/`, `strategies/`, `scheduler/`, `ai/`, `dashboard/`, `tests/`, `config/`, `scheduler/systemd/`, `scripts/`; executed the validation suite (`unittest`, `ruff`, `compileall`, 30-day backtest).
 
 ---
@@ -169,7 +169,7 @@ Turn "capability exists" into "operative policy"; prove edge before increasing a
 1. **Second broker (read-only)** as a fallback quote source (Tradier/Polygon). Order submission stays Alpaca-only.
 2. **Metrics + alerting.** `core/metrics.py` → Prometheus textfile or CloudWatch EMF. Scans/min, rejects/min, elevated_count, daily_loss_pct, slippage p50/p95, AI veto rate.
 3. **Auto-close on critical conditions only.** Flip `execute_closes: true` for `stop_loss` and `close_for_ex_div` only. Circuit breaker: > 3 auto-closes in 15 min → halt + ack.
-4. **Kill-switch UX.** `scripts/kill.sh` writes `/etc/hawksoptions/HALTED`; `load_runtime` checks; dashboard surfaces "system halted".
+4. **Kill-switch UX.** `scripts/kill.sh` writes the configured halt file (`reporting.halt_file`, default `data/HALTED`); `load_runtime` checks it; dashboard surfaces "system halted".
 5. **Live-mode gating.** `mode: live` requires `HAWKSOPTIONS_LIVE_ACK=YYYY-MM-DD` matching today AND zero open P1 Beads tasks.
 6. **Walk-forward harness.** Quarterly real-data refit; held-out validation; persist to `config/profiles/<quarter>.yaml`.
 7. **Stress / scenario tests.** VIX spike, gap-down, weekend gap, partial fill, broker disconnect, stale NBBO mid-submit.
@@ -204,7 +204,7 @@ Goal: at any moment, after any failure, the system can answer "what do I actuall
 1. **Startup reconciler.** New `core/reconciler.py` runs at the head of every scheduler job. Pulls authoritative open option positions and pending orders from Alpaca, diffs against `data/positions.json`:
    - Broker has positions missing locally → ingest as `PositionSnapshot` with `reconciled=true`; try to identify originating strategy from trade log; mark `strategy_unknown` if not found.
    - Local has positions missing at broker → mark closed at the last known broker confirmation; emit `reconciliation_orphan_local` alert.
-   - Disagreement on max_loss / qty / strike / expiration → halt the system (`/etc/hawksoptions/HALTED`), require manual ack.
+   - Disagreement on max_loss / qty / strike / expiration → halt the system via the configured halt file (`reporting.halt_file`, default `data/HALTED`), require manual ack.
    - Persist the diff to `reports/reconciliation/<timestamp>.json` every run.
 2. **Idempotent order submission.** Derive `client_order_id` from `(strategy_id, attempt_n, sha256(payload))`; persist before submit; reject duplicates broker-side. Prevents double-submit on retry-after-timeout.
 3. **Trade-log replay.** `scripts/rebuild_positions.py` scans the trade log forward and reconstructs `positions.json`. Test: rebuild on a fixture and assert identical state.
