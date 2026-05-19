@@ -205,8 +205,6 @@ class AlpacaOptionsClient:
         if configured_feed is not None:
             feed = str(configured_feed).strip().lower()
             return feed or None
-        if self._mode() == "paper":
-            return "indicative"
         return None
 
     def _option_daily_bar_end(self, *, as_of: date, start: datetime) -> datetime | None:

@@ -212,8 +212,9 @@ class AlpacaOptionsClientTests(unittest.TestCase):
         self.assertEqual(quotes["SPY260619P00500000"]["source"], "alpaca_option_latest_quote")
         self.assertIn("timestamp", quotes["SPY260619P00500000"])
 
-    def test_paper_option_quotes_default_to_indicative_feed_when_supported(self):
+    def test_configured_option_quotes_use_feed_when_supported(self):
         config = load_config()
+        config["market_data"]["option_feed"] = "indicative"
         _RecordingOptionDataClient.reset()
         with (
             patch.dict("os.environ", {"ALPACA_OPTIONS_PAPER_API_KEY": "key", "ALPACA_OPTIONS_PAPER_SECRET_KEY": "secret"}),
@@ -292,7 +293,7 @@ class AlpacaOptionsClientTests(unittest.TestCase):
         self.assertEqual(contract.meta["source"], "alpaca_option_chain")
         self.assertEqual(contract.meta["volume_source"], "daily_bar")
 
-    def test_paper_option_chain_defaults_to_indicative_and_omits_current_bar_end(self):
+    def test_paper_option_chain_uses_opra_feed_and_omits_current_bar_end(self):
         config = load_config()
         config["market_data"]["use_sample_data"] = False
         _RecordingOptionChainDataClient.reset()
@@ -312,14 +313,15 @@ class AlpacaOptionsClientTests(unittest.TestCase):
             client = AlpacaOptionsClient(config, use_sample_data=False)
             client.get_option_chain("SPY", as_of=datetime.now(timezone.utc).date())
 
-        self.assertEqual(_RecordingOptionChainDataClient.chain_requests[0].feed, "indicative")
-        self.assertEqual(_RecordingOptionChainDataClient.bar_requests[0].feed, "indicative")
+        self.assertEqual(_RecordingOptionChainDataClient.chain_requests[0].feed, "opra")
+        self.assertEqual(_RecordingOptionChainDataClient.bar_requests[0].feed, "opra")
         self.assertIsNone(getattr(_RecordingOptionChainDataClient.bar_requests[0], "end", None))
 
     def test_live_option_chain_does_not_default_to_indicative_feed(self):
         config = load_config()
         config["mode"] = "live"
         config["market_data"]["use_sample_data"] = False
+        config["market_data"].pop("option_feed", None)
         _RecordingOptionChainDataClient.reset()
         with (
             patch.dict("os.environ", {"ALPACA_OPTIONS_LIVE_API_KEY": "key", "ALPACA_OPTIONS_LIVE_SECRET_KEY": "secret"}),
