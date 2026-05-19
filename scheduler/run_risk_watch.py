@@ -19,10 +19,12 @@ from scheduler.common import current_positions, load_runtime, refresh_positions
 
 def run_risk_watch(*, config: dict | None = None, dry_run: bool = True) -> dict[str, object]:
     config, client, paths = load_runtime(config)
-    positions = refresh_positions(current_positions(paths), client=client)
+    now = datetime.now(timezone.utc)
+    as_of = now.date()
+    positions = refresh_positions(current_positions(paths), client=client, as_of=as_of)
     flagged = identify_elevated_positions(positions, config=config)
     payload: dict[str, object] = {
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "generated_at": now.isoformat(timespec="seconds"),
         "elevated_count": len(flagged),
         "elevated_positions": flagged,
         "triggered_extra_risk_check": False,
@@ -37,7 +39,7 @@ def run_risk_watch(*, config: dict | None = None, dry_run: bool = True) -> dict[
             client=client,
             paths=paths,
             positions=positions,
-            as_of=datetime.now(timezone.utc).date(),
+            as_of=as_of,
             dry_run=True,
         )
     if not dry_run:

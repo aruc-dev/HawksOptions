@@ -47,7 +47,7 @@ def reconcile_state(
         "mismatched_qty": mismatched_qty,
         "halted": halted,
     }
-    if missing_local:
+    if missing_local and not halted:
         local_positions = _apply_nonfatal_reconciliation(
             local_positions,
             broker_positions,

@@ -189,7 +189,7 @@ class ProductionReadinessWorkflowTests(unittest.TestCase):
             with (
                 patch.object(run_risk_watch, "load_runtime", return_value=({"mode": "paper"}, object(), paths)),
                 patch.object(run_risk_watch, "current_positions", return_value=["position"]),
-                patch.object(run_risk_watch, "refresh_positions", return_value=["position"]),
+                patch.object(run_risk_watch, "refresh_positions", return_value=["position"]) as refresh_positions,
                 patch.object(run_risk_watch, "identify_elevated_positions", return_value=["strategy-1"]),
                 patch("scheduler.run_risk_check._run_risk_check_with_runtime", return_value={"actions": []}) as risk_check,
             ):
@@ -198,6 +198,7 @@ class ProductionReadinessWorkflowTests(unittest.TestCase):
             self.assertEqual(result["elevated_count"], 1)
             self.assertTrue(result["triggered_extra_risk_check"])
             risk_check.assert_called_once()
+            self.assertEqual(refresh_positions.call_args.kwargs["as_of"], risk_check.call_args.kwargs["as_of"])
             persisted = json.loads(elevated_path.read_text(encoding="utf-8"))
             self.assertEqual(persisted["elevated_positions"], ["strategy-1"])
             self.assertTrue(persisted["triggered_extra_risk_check"])
@@ -424,6 +425,27 @@ class ProductionReadinessWorkflowTests(unittest.TestCase):
             self.assertEqual(report["broker_only_short"], ["SPY260619C00500000"])
             self.assertTrue(report["halted"])
             self.assertTrue(halt_file.exists())
+            self.assertEqual(load_positions(positions_path), [])
+
+    def test_reconciler_does_not_mutate_positions_during_halted_pass(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            positions_path = Path(tmp) / "positions.json"
+            reports_dir = Path(tmp) / "reports"
+            halt_file = Path(tmp) / "HALTED"
+
+            report = reconcile_state(
+                client=_BrokerPositionsClient([
+                    {"symbol": "SPY260619P00500000", "qty": "1", "avg_entry_price": "1.25", "current_price": "1.30"},
+                    {"symbol": "SPY260619C00500000", "qty": "-1", "avg_entry_price": "1.25", "current_price": "1.30"},
+                ]),
+                positions_path=positions_path,
+                reports_dir=reports_dir,
+                halt_file=halt_file,
+            )
+
+            self.assertEqual(report["missing_local"], ["SPY260619C00500000", "SPY260619P00500000"])
+            self.assertEqual(report["broker_only_short"], ["SPY260619C00500000"])
+            self.assertTrue(report["halted"])
             self.assertEqual(load_positions(positions_path), [])
 
     def test_audit_pack_contains_manifest_and_daily_artifacts(self):
