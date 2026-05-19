@@ -29,6 +29,25 @@ def run_risk_check(*, config: dict | None = None, as_of: date | None = None, dry
     as_of = as_of or date.today()
     config, client, paths = load_runtime(config)
     positions = refresh_positions(current_positions(paths), client=client, as_of=as_of)
+    return _run_risk_check_with_runtime(
+        config=config,
+        client=client,
+        paths=paths,
+        positions=positions,
+        as_of=as_of,
+        dry_run=dry_run,
+    )
+
+
+def _run_risk_check_with_runtime(
+    *,
+    config: dict,
+    client,
+    paths: dict[str, Path],
+    positions: list,
+    as_of: date,
+    dry_run: bool,
+) -> dict[str, object]:
     pending_close_reconciliations = reconcile_pending_closes(positions, client=client)
     closed_positions = [position for position in positions if position.closed_at is not None]
     positions = [position for position in positions if position.closed_at is None]

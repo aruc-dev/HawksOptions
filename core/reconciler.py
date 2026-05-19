@@ -196,7 +196,7 @@ def _broker_option_max_loss(*, side: str, option_type: str, strike: float, avg_e
 def _write_reconciliation_report(reports_dir: Path, payload: dict[str, Any], *, as_of: datetime) -> Path:
     directory = reports_dir / "reconciliation"
     directory.mkdir(parents=True, exist_ok=True)
-    path = directory / f"reconciliation_{as_of:%Y%m%d-%H%M%S}.json"
+    path = directory / f"reconciliation_{as_of:%Y%m%d-%H%M%S-%f}.json"
     atomic_write_text(path, json.dumps(payload, indent=2, sort_keys=True, default=str), lock=False)
     return path
 

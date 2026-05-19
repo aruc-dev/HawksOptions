@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from core.file_lock import atomic_write_text
+
 
 def write_metrics_textfile(path: Path, metrics: dict[str, float | int]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -19,7 +21,7 @@ def write_metrics_textfile(path: Path, metrics: dict[str, float | int]) -> Path:
     lines.append(f"# HELP {generated} Unix timestamp when this textfile was generated.")
     lines.append(f"# TYPE {generated} gauge")
     lines.append(f"{generated} {datetime.now(timezone.utc).timestamp():.0f}")
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    atomic_write_text(path, "\n".join(lines) + "\n")
     return path
 
 

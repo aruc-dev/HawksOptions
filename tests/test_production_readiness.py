@@ -84,6 +84,7 @@ class ProductionReadinessConfigTests(unittest.TestCase):
 class ProductionReadinessWorkflowTests(unittest.TestCase):
     def test_backtest_cli_maps_alpaca_history_to_historical_replay(self):
         config = load_config()
+        config["backtest"]["fixture_file"] = "tests/fixtures/backtest_market_data.json"
         patched = run_backtest_cli._apply_backtest_source(
             config,
             source="alpaca-history",
@@ -94,6 +95,7 @@ class ProductionReadinessWorkflowTests(unittest.TestCase):
         self.assertEqual(patched["backtest"]["data_source"], "historical_replay")
         self.assertEqual(patched["backtest"]["historical_provider"], "alpaca")
         self.assertEqual(patched["backtest"]["historical_data_file"], "reports/historical/export.json")
+        self.assertNotIn("fixture_file", patched["backtest"])
         self.assertTrue(patched["backtest"]["fixture_fallback_to_sample"])
 
     def test_tuning_top_runs_prefers_constraint_passing_runs(self):
@@ -165,7 +167,7 @@ class ProductionReadinessWorkflowTests(unittest.TestCase):
                 patch.object(run_risk_watch, "current_positions", return_value=["position"]),
                 patch.object(run_risk_watch, "refresh_positions", return_value=["position"]),
                 patch.object(run_risk_watch, "identify_elevated_positions", return_value=["strategy-1"]),
-                patch("scheduler.run_risk_check.run_risk_check", return_value={"actions": []}) as risk_check,
+                patch("scheduler.run_risk_check._run_risk_check_with_runtime", return_value={"actions": []}) as risk_check,
             ):
                 result = run_risk_watch.run_risk_watch(dry_run=False)
 
@@ -227,6 +229,34 @@ class ProductionReadinessWorkflowTests(unittest.TestCase):
         self.assertFalse(plans[0]["auto_close_allowed"])
         self.assertEqual(plans[0]["result"]["status"], "planned")
 
+    def test_empty_auto_close_allowlist_allows_no_actions(self):
+        order = StrategyOrder(
+            strategy_name="vertical_spread",
+            strategy_id="vertical_spread-SPY-20260423",
+            underlying="SPY",
+            legs=[OrderLeg(contract=_option("SPY260619P00500000"), side="sell_to_open")],
+            max_loss=100.0,
+            max_profit=20.0,
+            required_buying_power=100.0,
+            profit_take_pct=0.5,
+            loss_stop_multiple=1.5,
+            roll_threshold_delta=-0.4,
+            iv_rank=50.0,
+        )
+        position = position_from_order(order, opened_at=datetime(2026, 4, 23, tzinfo=timezone.utc))
+
+        plans = close_order_plans(
+            [position],
+            [{"strategy_id": position.strategy_id, "action": "stop_loss"}],
+            client=object(),
+            execute_enabled=True,
+            dry_run=False,
+            allowed_auto_close_actions=[],
+        )
+
+        self.assertTrue(plans[0]["dry_run"])
+        self.assertFalse(plans[0]["auto_close_allowed"])
+
     def test_reconciler_ingests_broker_only_option_position(self):
         with tempfile.TemporaryDirectory() as tmp:
             positions_path = Path(tmp) / "positions.json"
@@ -279,6 +309,7 @@ class ProductionReadinessWorkflowTests(unittest.TestCase):
 
             self.assertEqual(report["mismatched_qty"], ["SPY260619P00500000"])
             self.assertTrue(halt_file.exists())
+            self.assertRegex(Path(report["report_path"]).name, r"reconciliation_\d{8}-\d{6}-\d{6}\.json")
 
     def test_reconciler_halts_on_partial_orphaned_multileg_position(self):
         with tempfile.TemporaryDirectory() as tmp:

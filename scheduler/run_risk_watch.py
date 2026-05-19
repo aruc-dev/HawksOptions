@@ -29,10 +29,17 @@ def run_risk_watch(*, config: dict | None = None, dry_run: bool = True) -> dict[
         "risk_check": None,
     }
     if flagged:
-        from scheduler.run_risk_check import run_risk_check
+        from scheduler.run_risk_check import _run_risk_check_with_runtime
 
         payload["triggered_extra_risk_check"] = True
-        payload["risk_check"] = run_risk_check(config=config, dry_run=True)
+        payload["risk_check"] = _run_risk_check_with_runtime(
+            config=config,
+            client=client,
+            paths=paths,
+            positions=positions,
+            as_of=datetime.now(timezone.utc).date(),
+            dry_run=True,
+        )
     if not dry_run:
         paths["elevated_positions"].parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(paths["elevated_positions"], json.dumps(payload, indent=2))

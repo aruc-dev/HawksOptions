@@ -32,13 +32,17 @@ def _apply_backtest_source(
             backtest_cfg["data_source"] = "sample"
         elif normalized in {"fixture", "historical-replay", "json-replay"}:
             backtest_cfg["data_source"] = "historical_replay"
+            if normalized != "fixture":
+                backtest_cfg.pop("fixture_file", None)
         elif normalized in {"alpaca-history", "alpaca"}:
             backtest_cfg["data_source"] = "historical_replay"
             backtest_cfg["historical_provider"] = "alpaca"
+            backtest_cfg.pop("fixture_file", None)
         else:
             raise SystemExit(f"unsupported backtest source {source!r}")
     if historical_data_file:
         backtest_cfg["historical_data_file"] = historical_data_file
+        backtest_cfg.pop("fixture_file", None)
     if fixture_fallback_to_sample:
         backtest_cfg["fixture_fallback_to_sample"] = True
     return config

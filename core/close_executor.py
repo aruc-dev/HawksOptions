@@ -79,7 +79,11 @@ def close_order_plans(
 ) -> list[dict[str, Any]]:
     positions_by_id = {position.strategy_id: position for position in positions}
     plans = reconcile_pending_closes(positions_by_id.values(), client=client)
-    allowed_actions = {str(item) for item in (allowed_auto_close_actions or CLOSE_ACTIONS)}
+    allowed_actions = (
+        set(CLOSE_ACTIONS)
+        if allowed_auto_close_actions is None
+        else {str(item) for item in allowed_auto_close_actions}
+    )
     for action in _dedupe_close_actions(actions, positions_by_id):
         action_name = str(action.get("action", ""))
         strategy_id = str(action.get("strategy_id", ""))
