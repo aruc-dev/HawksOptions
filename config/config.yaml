@@ -25,31 +25,83 @@ gates:
   min_iv_rank_for_short_premium: 30
   max_iv_rank_for_long_premium: 40
   vix_iv_rank_scaling:
-    enabled: false
+    enabled: true
+    require_market_context: false
     low_vix_below: 15
     low_vix_min_iv_rank_for_short_premium: 50
     high_vix_above: 25
     high_vix_min_iv_rank_for_short_premium: 35
     # Required when market_data.vix_symbol_scale is "proxy"; proxy ETF prices
     # are not on the same scale as the VIX index.
-    proxy_low_below:
-    proxy_high_above:
+    proxy_low_below: 14
+    proxy_high_above: 28
   # Calendar spreads: flag for close when the front short leg's mid
   # falls within this many dollars per share of intrinsic value
   # (early-assignment risk).
   calendar_assignment_slippage: 0.05
 
+portfolio_allocation:
+  family_caps_pct:
+    short_premium: 0.15
+    long_premium: 0.05
+    earnings_event: 0.05
+    hedge: 0.02
+  max_single_underlying_allocation_pct: 0.07
+
+portfolio_concentration:
+  max_sector_allocation_pct: 0.12
+  max_correlation_group_allocation_pct: 0.15
+
 portfolio_beta_limits:
-  enabled: false
+  enabled: true
   # Optional SPY-beta-weighted dollar-delta ceiling. For example, 0.50
   # caps projected beta-weighted delta at 50% of account equity when enabled.
-  max_abs_spy_beta_delta_pct: 0.50
-  symbol_betas: {}
+  max_abs_spy_beta_delta_pct: 0.30
+  symbol_betas:
+    SPY: 1.00
+    QQQ: 1.18
+    IWM: 1.12
+    AAPL: 1.25
+    MSFT: 1.08
+
+position_sizing:
+  iv_rank_scaled:
+    enabled: true
+    min_iv_rank: 30
+    max_iv_rank: 80
+    min_size_fraction: 0.35
+    max_size_fraction: 1.0
+
+portfolio_vol_targeting:
+  enabled: true
+  target_realized_vol: 0.18
+  min_portfolio_risk_pct: 0.08
+  max_portfolio_risk_pct: 0.20
+
+risk_throttle:
+  max_drawdown_halt_pct: 10
+  daily_loss_halt_pct: 4
+  reduce_risk_drawdown_pct: 5
+  max_throttled_position_risk_pct: 2.5
+
+reconciliation:
+  enabled: true
+  skip_when_using_sample_data: true
 
 risk_actions:
   # Continuous risk checks always produce close-order plans for actionable
   # exits. Actual broker submission remains disabled unless explicitly enabled.
   execute_closes: false
+  allowed_auto_close_actions: [stop_loss, close_for_ex_div]
+
+execution:
+  limit_price_improvement:
+    enabled: true
+    steps: 3
+    max_concession_pct_of_half_spread: 1.0
+    liquidity_aware: true
+    tight_spread_pct: 0.03
+    wide_spread_pct: 0.10
 
 underlyings:
   source: config/underlyings.yaml
@@ -75,6 +127,13 @@ market_data:
 
 backtest:
   data_source: sample
+  # For real-data replay, export normalized Alpaca history to JSON/CSV/Parquet
+  # and run scheduler/run_backtest.py with --source alpaca-history and
+  # --historical-data-file. The default remains deterministic sample data so CI
+  # does not depend on broker credentials.
+  historical_provider: alpaca
+  historical_data_file: reports/historical/alpaca_history.json
+  fixture_fallback_to_sample: false
   # Slippage and commission applied per leg on both entry and exit.
   # Repo defaults include realistic slippage/commission, so baseline
   # backtest results include transaction-cost drag.
@@ -127,6 +186,7 @@ strategies:
     roll_threshold_delta: -0.40
     min_credit_to_width: 0.05
     min_net_credit: 5.0
+    min_credit_to_roundtrip_cost: 1.15
     min_iv_realized_spread: 0.0
     min_tail_skew: 0.0
     weight: 1.0
@@ -244,7 +304,7 @@ strategies:
     weight: 0.4
 
   tail_risk_hedge:
-    enabled: false
+    enabled: true
     required_options_level: 1
     swing_only: true
     target_delta: -0.10
@@ -262,7 +322,7 @@ strategies:
     weight: 0.2
 
   earnings_iron_condor:
-    enabled: false
+    enabled: true
     required_options_level: 3
     swing_only: true
     require_iv_rank: 60
@@ -342,7 +402,10 @@ schedule:
 reporting:
   trade_log_file: data/trades.csv
   positions_file: data/positions.json
+  elevated_positions_file: data/elevated_positions.json
+  halt_file: data/HALTED
   greeks_snapshot_dir: data/greeks_snapshots
   iv_history_file: data/iv_rank_history.csv
   reports_dir: reports
   logs_dir: logs
+  metrics_textfile: reports/metrics/hawksoptions.prom

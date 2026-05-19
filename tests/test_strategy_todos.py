@@ -1013,8 +1013,10 @@ class StrategyTodoTests(unittest.TestCase):
         self.assertIsNotNone(order)
         self.assertEqual(order.metadata["trigger"], "event_risk")
 
-    def test_tail_risk_hedge_disabled_by_default(self):
-        self.assertNotIn("tail_risk_hedge", [strategy.name for strategy in build_enabled_strategies(load_config())])
+    def test_tail_risk_hedge_enabled_by_default_with_budget_cap(self):
+        config = load_config()
+        self.assertIn("tail_risk_hedge", [strategy.name for strategy in build_enabled_strategies(config)])
+        self.assertEqual(config["strategies"]["tail_risk_hedge"]["premium_budget_pct"], 0.01)
 
     def test_earnings_calendar_scanner_finds_filtered_research_candidate(self):
         config = deepcopy(load_config())

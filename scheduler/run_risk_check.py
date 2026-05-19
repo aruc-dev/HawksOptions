@@ -12,6 +12,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
 from core.close_executor import close_order_plans, reconcile_pending_closes
+from core.metrics import risk_check_metrics, write_metrics_textfile
 from core.order_executor import save_positions
 from core.risk_manager import (
     continuous_risk_checks,
@@ -38,6 +39,7 @@ def run_risk_check(*, config: dict | None = None, as_of: date | None = None, dry
     )
     risk_actions = config.get("risk_actions", {}) if isinstance(config, dict) else {}
     execute_closes = bool(risk_actions.get("execute_closes", False)) if isinstance(risk_actions, dict) else False
+    allowed_auto_close_actions = risk_actions.get("allowed_auto_close_actions", ["stop_loss", "close_for_ex_div"]) if isinstance(risk_actions, dict) else []
     payload["pending_close_reconciliations"] = pending_close_reconciliations
     payload["close_orders"] = close_order_plans(
         positions,
@@ -45,6 +47,7 @@ def run_risk_check(*, config: dict | None = None, as_of: date | None = None, dry
         client=client,
         execute_enabled=execute_closes,
         dry_run=dry_run,
+        allowed_auto_close_actions=allowed_auto_close_actions,
     )
     closed_positions.extend(position for position in positions if position.closed_at is not None)
     if not dry_run:
@@ -84,6 +87,8 @@ def run_risk_check(*, config: dict | None = None, as_of: date | None = None, dry
     else:
         snapshot_path = write_greeks_snapshot(paths["greeks_dir"], payload, as_of=datetime.now(timezone.utc))
         payload["snapshot_path"] = str(snapshot_path)
+        if "metrics" in paths:
+            payload["metrics_path"] = str(write_metrics_textfile(paths["metrics"], risk_check_metrics(payload)))
     return payload
 
 

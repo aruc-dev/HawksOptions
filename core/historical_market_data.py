@@ -81,8 +81,8 @@ class HistoricalReplayClient:
         self.config = deepcopy(config)
         backtest_cfg = self.config.get("backtest", {})
         source_file = (
-            backtest_cfg.get("historical_data_file")
-            or backtest_cfg.get("fixture_file")
+            backtest_cfg.get("fixture_file")
+            or backtest_cfg.get("historical_data_file")
             or "tests/fixtures/backtest_market_data.json"
         )
         path = _resolve_path(source_file)

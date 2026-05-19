@@ -1,0 +1,10 @@
+[Unit]
+Description=Run HawksOptions report retention prune daily
+
+[Timer]
+OnCalendar=*-*-* 17:30:00
+Persistent=true
+Unit=hawksoptions-prune-reports.service
+
+[Install]
+WantedBy=timers.target

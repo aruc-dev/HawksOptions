@@ -1,0 +1,9 @@
+# Risk-critical code requires human review before merge.
+/core/risk_manager.py @aruc-dev
+/core/order_executor.py @aruc-dev
+/core/close_executor.py @aruc-dev
+/core/alpaca_options_client.py @aruc-dev
+/core/reconciler.py @aruc-dev
+/config/config.yaml @aruc-dev
+/config/underlyings.yaml @aruc-dev
+/scheduler/systemd/ @aruc-dev

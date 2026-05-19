@@ -50,7 +50,7 @@ class VerticalSpreadStrategy(BaseStrategy):
             return None
         if not self.credit_quality_passes(credit=credit, width=width):
             return None
-        qty = self.order_quantity(context)
+        qty = self.risk_scaled_order_quantity(context, unit_max_loss=width - credit)
         if qty <= 0:
             return None
         order = StrategyOrder(

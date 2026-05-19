@@ -1,0 +1,9 @@
+[Unit]
+Description=HawksOptions report retention prune
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/hawksoptions
+EnvironmentFile=-/etc/hawksoptions/hawksoptions.env
+ExecStart=/opt/hawksoptions/scripts/prune_reports.sh

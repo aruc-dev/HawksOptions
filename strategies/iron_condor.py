@@ -70,7 +70,7 @@ class IronCondorStrategy(BaseStrategy):
         ]
         if not self.cost_adjusted_credit_passes(credit=credit, legs=legs):
             return None
-        qty = self.order_quantity(context)
+        qty = self.risk_scaled_order_quantity(context, unit_max_loss=max_loss)
         if qty <= 0:
             return None
         order = StrategyOrder(

@@ -176,7 +176,7 @@ class TestCommittedPaperDefaults(unittest.TestCase):
 
     def test_default_underlyings_do_not_enable_cash_secured_entries(self):
         payload = cfg_mod.load_yaml(cfg_mod.BASE_DIR / "config" / "underlyings.yaml")
-        defined_risk_entries = {"vertical_spread", "iron_condor"}
+        defined_risk_entries = {"vertical_spread", "iron_condor", "tail_risk_hedge", "earnings_iron_condor"}
 
         self.assertGreater(len(payload["underlyings"]), 0)
         for underlying in payload["underlyings"]:

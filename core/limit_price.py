@@ -27,7 +27,7 @@ def limit_price_improvement_plan(
     settings = _settings(order, config or {})
     enabled = bool(settings.get("enabled", True))
     steps = max(1, int(settings.get("steps", 3) or 3))
-    concession_pct = max(0.0, min(float(settings.get("max_concession_pct_of_half_spread", 1.0) or 0.0), 1.0))
+    concession_pct = _liquidity_adjusted_concession(order, settings)
     max_concession = max(0.0, mid_credit - worst_credit) * concession_pct
     target_credit = mid_credit - max_concession if enabled else mid_credit
     min_credit = _min_acceptable_credit(order, config or {})
@@ -85,9 +85,27 @@ def _settings(order: StrategyOrder, config: dict[str, Any]) -> dict[str, Any]:
         "enabled": True,
         "steps": 3,
         "max_concession_pct_of_half_spread": 1.0,
+        "liquidity_aware": False,
+        "tight_spread_pct": 0.03,
+        "wide_spread_pct": 0.10,
         **raw,
         **metadata_settings,
     }
+
+
+def _liquidity_adjusted_concession(order: StrategyOrder, settings: dict[str, Any]) -> float:
+    configured = max(0.0, min(float(settings.get("max_concession_pct_of_half_spread", 1.0) or 0.0), 1.0))
+    if not bool(settings.get("liquidity_aware", False)) or not order.legs:
+        return configured
+    average_spread = sum(max(0.0, leg.contract.spread_pct()) for leg in order.legs) / len(order.legs)
+    tight = max(0.0, float(settings.get("tight_spread_pct", 0.03)))
+    wide = max(tight, float(settings.get("wide_spread_pct", 0.10)))
+    if average_spread <= tight:
+        return min(configured, 0.35)
+    if average_spread >= wide:
+        return configured
+    progress = (average_spread - tight) / (wide - tight)
+    return round(min(configured, 0.35 + ((configured - 0.35) * progress)), 6)
 
 
 def _unit_qty(order: StrategyOrder) -> int:
