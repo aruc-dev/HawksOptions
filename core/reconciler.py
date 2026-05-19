@@ -37,7 +37,7 @@ def reconcile_state(
         for symbol in broker_qty.keys() & local_qty.keys()
         if broker_qty[symbol] != local_qty[symbol]
     )
-    halted = bool(mismatched_qty or partial_orphan_local or broker_only_short)
+    halted = bool(mismatched_qty or orphan_local or broker_only_short)
     report = {
         "generated_at": as_of.isoformat(timespec="seconds"),
         "missing_local": missing_local,
@@ -47,12 +47,11 @@ def reconcile_state(
         "mismatched_qty": mismatched_qty,
         "halted": halted,
     }
-    if missing_local or orphan_local:
+    if missing_local:
         local_positions = _apply_nonfatal_reconciliation(
             local_positions,
             broker_positions,
             [symbol for symbol in missing_local if symbol not in set(broker_only_short)],
-            [symbol for symbol in orphan_local if symbol not in set(partial_orphan_local)],
             as_of=as_of,
         )
         save_positions(positions_path, local_positions)
@@ -60,8 +59,8 @@ def reconcile_state(
         reasons = []
         if mismatched_qty:
             reasons.append("mismatched_qty:" + ",".join(mismatched_qty))
-        if partial_orphan_local:
-            reasons.append("partial_orphan_local:" + ",".join(partial_orphan_local))
+        if orphan_local:
+            reasons.append("orphan_local:" + ",".join(orphan_local))
         if broker_only_short:
             reasons.append("broker_only_short:" + ",".join(broker_only_short))
         write_halt_file(halt_file, reason="reconciliation_" + ";".join(reasons))
@@ -127,16 +126,10 @@ def _apply_nonfatal_reconciliation(
     local_positions: list[PositionSnapshot],
     broker_positions: list[dict[str, Any]],
     missing_local: list[str],
-    orphan_local: list[str],
     *,
     as_of: datetime,
 ) -> list[PositionSnapshot]:
-    orphan_set = set(orphan_local)
-    out = [
-        position
-        for position in local_positions
-        if not any(leg.contract.contract_symbol in orphan_set for leg in position.legs)
-    ]
+    out = list(local_positions)
     for position in broker_positions:
         symbol = str(position["symbol"])
         if symbol not in missing_local:

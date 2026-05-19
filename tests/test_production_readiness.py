@@ -349,6 +349,39 @@ class ProductionReadinessWorkflowTests(unittest.TestCase):
             self.assertTrue(halt_file.exists())
             self.assertEqual(positions[0].strategy_id, "vertical_spread-SPY-20260423")
 
+    def test_reconciler_halts_and_preserves_orphaned_local_position(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            positions_path = Path(tmp) / "positions.json"
+            reports_dir = Path(tmp) / "reports"
+            halt_file = Path(tmp) / "HALTED"
+            order = StrategyOrder(
+                strategy_name="vertical_spread",
+                strategy_id="vertical_spread-SPY-20260423",
+                underlying="SPY",
+                legs=[OrderLeg(contract=_option("SPY260619P00500000"), side="buy_to_open", qty=1)],
+                max_loss=100.0,
+                max_profit=20.0,
+                required_buying_power=100.0,
+                profit_take_pct=0.5,
+                loss_stop_multiple=1.5,
+                roll_threshold_delta=-0.4,
+                iv_rank=50.0,
+            )
+            save_positions(positions_path, [position_from_order(order)])
+
+            report = reconcile_state(
+                client=_BrokerPositionsClient([]),
+                positions_path=positions_path,
+                reports_dir=reports_dir,
+                halt_file=halt_file,
+            )
+            positions = load_positions(positions_path)
+
+            self.assertEqual(report["orphan_local"], ["SPY260619P00500000"])
+            self.assertTrue(report["halted"])
+            self.assertTrue(halt_file.exists())
+            self.assertEqual(positions[0].strategy_id, "vertical_spread-SPY-20260423")
+
     def test_reconciler_halts_on_broker_only_short_option(self):
         with tempfile.TemporaryDirectory() as tmp:
             positions_path = Path(tmp) / "positions.json"
