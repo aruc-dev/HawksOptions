@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import math
 import os
@@ -164,17 +165,19 @@ def _credentials(mode: str) -> tuple[str, str]:
     return key, secret
 
 
+def _request_class_accepts_kwarg(request_class: Any, keyword: str) -> bool:
+    try:
+        parameters = inspect.signature(request_class).parameters.values()
+    except (TypeError, ValueError):
+        return True
+    return any(parameter.name == keyword or parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters)
+
+
 def _request_with_optional_feed(request_class: Any, *, feed: str | None = None, **kwargs: Any) -> Any:
     request_kwargs = {key: value for key, value in kwargs.items() if value is not None}
-    if feed:
+    if feed and _request_class_accepts_kwarg(request_class, "feed"):
         request_kwargs["feed"] = feed
-    try:
-        return request_class(**request_kwargs)
-    except TypeError:
-        if "feed" not in request_kwargs:
-            raise
-        request_kwargs.pop("feed", None)
-        return request_class(**request_kwargs)
+    return request_class(**request_kwargs)
 
 
 class AlpacaOptionsClient:
@@ -207,13 +210,15 @@ class AlpacaOptionsClient:
             return feed or None
         return None
 
-    def _option_daily_bar_end(self, *, as_of: date, start: datetime) -> datetime | None:
+    def _option_daily_bar_window(self, *, as_of: date) -> tuple[datetime, datetime | None]:
         today_utc = datetime.now(timezone.utc).date()
+        effective_as_of = min(as_of, today_utc)
+        start = datetime.combine(effective_as_of, datetime.min.time(), tzinfo=timezone.utc)
         if self._mode() == "paper" and as_of >= today_utc:
-            return None
+            return start, None
         if as_of >= today_utc:
-            return datetime.now(timezone.utc)
-        return start + timedelta(days=1)
+            return start, datetime.now(timezone.utc)
+        return start, start + timedelta(days=1)
 
     def _get_trading_client(self) -> Any:
         trading_client_class = _resolve_trading_client_class()
@@ -727,8 +732,7 @@ class AlpacaOptionsClient:
             return {}
         market_data = self.config.get("market_data", {})
         batch_size = max(1, int(market_data.get("option_bar_batch_size", 200)))
-        start = datetime.combine(as_of, datetime.min.time(), tzinfo=timezone.utc)
-        end = self._option_daily_bar_end(as_of=as_of, start=start)
+        start, end = self._option_daily_bar_window(as_of=as_of)
         out: dict[str, int] = {}
         for batch in _chunks(unique_symbols, batch_size):
             request = _request_with_optional_feed(

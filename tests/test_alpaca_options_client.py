@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -22,6 +22,13 @@ class _Quote:
 class _LatestQuoteRequest:
     def __init__(self, symbol_or_symbols):
         self.symbol_or_symbols = symbol_or_symbols
+
+
+class _BrokenFeedRequest:
+    def __init__(self, *, symbol_or_symbols, feed=None):
+        self.symbol_or_symbols = symbol_or_symbols
+        self.feed = feed
+        raise TypeError("constructor failed after feed accepted")
 
 
 class _KeywordRequest:
@@ -227,6 +234,24 @@ class AlpacaOptionsClientTests(unittest.TestCase):
 
         self.assertEqual(_RecordingOptionDataClient.latest_quote_requests[0].feed, "indicative")
 
+    def test_optional_feed_fallback_preserves_real_type_errors(self):
+        with self.assertRaisesRegex(TypeError, "constructor failed"):
+            client_module._request_with_optional_feed(
+                _BrokenFeedRequest,
+                feed="opra",
+                symbol_or_symbols=["SPY260619P00500000"],
+            )
+
+    def test_optional_feed_is_omitted_when_request_class_does_not_support_it(self):
+        request = client_module._request_with_optional_feed(
+            _LatestQuoteRequest,
+            feed="opra",
+            symbol_or_symbols=["SPY260619P00500000"],
+        )
+
+        self.assertEqual(request.symbol_or_symbols, ["SPY260619P00500000"])
+        self.assertFalse(hasattr(request, "feed"))
+
     def test_live_market_volatility_snapshot_uses_configured_symbol_quote(self):
         config = load_config()
         config["market_data"]["vix_symbol"] = "VIX"
@@ -342,6 +367,32 @@ class AlpacaOptionsClientTests(unittest.TestCase):
         self.assertFalse(hasattr(_RecordingOptionChainDataClient.chain_requests[0], "feed"))
         self.assertFalse(hasattr(_RecordingOptionChainDataClient.bar_requests[0], "feed"))
         self.assertIsNotNone(getattr(_RecordingOptionChainDataClient.bar_requests[0], "end", None))
+
+    def test_live_option_daily_volume_clamps_future_as_of_to_today(self):
+        config = load_config()
+        config["mode"] = "live"
+        config["market_data"]["use_sample_data"] = False
+        today_utc = datetime.now(timezone.utc).date()
+        _RecordingOptionChainDataClient.reset()
+        with (
+            patch.dict("os.environ", {"ALPACA_OPTIONS_LIVE_API_KEY": "key", "ALPACA_OPTIONS_LIVE_SECRET_KEY": "secret"}),
+            patch.object(client_module, "OptionHistoricalDataClient", _RecordingOptionChainDataClient),
+            patch.object(client_module, "OptionLatestQuoteRequest", _LatestQuoteRequest),
+            patch.object(client_module, "OptionChainRequest", _KeywordRequest),
+            patch.object(client_module, "OptionBarsRequest", _KeywordRequest),
+            patch.object(client_module, "TimeFrame", _TimeFrame),
+        ):
+            client = AlpacaOptionsClient(config, use_sample_data=False)
+            volumes = client._get_live_option_daily_volumes(
+                symbols=["SPY260619P00500000"],
+                as_of=today_utc + timedelta(days=1),
+            )
+
+        request = _RecordingOptionChainDataClient.bar_requests[0]
+        self.assertEqual(volumes["SPY260619P00500000"], 123)
+        self.assertEqual(request.start.date(), today_utc)
+        self.assertIsNotNone(request.end)
+        self.assertGreaterEqual(request.end, request.start)
 
     def test_live_underlying_snapshot_derives_iv_from_option_chain(self):
         config = load_config()
