@@ -164,6 +164,19 @@ def _credentials(mode: str) -> tuple[str, str]:
     return key, secret
 
 
+def _request_with_optional_feed(request_class: Any, *, feed: str | None = None, **kwargs: Any) -> Any:
+    request_kwargs = {key: value for key, value in kwargs.items() if value is not None}
+    if feed:
+        request_kwargs["feed"] = feed
+    try:
+        return request_class(**request_kwargs)
+    except TypeError:
+        if "feed" not in request_kwargs:
+            raise
+        request_kwargs.pop("feed", None)
+        return request_class(**request_kwargs)
+
+
 class AlpacaOptionsClient:
     def __init__(
         self,
@@ -185,6 +198,24 @@ class AlpacaOptionsClient:
 
     def _mode(self) -> str:
         return str(self.config.get("mode", "paper")).lower()
+
+    def _option_data_feed(self) -> str | None:
+        market_data = self.config.get("market_data", {})
+        configured_feed = market_data.get("option_feed", market_data.get("option_data_feed"))
+        if configured_feed is not None:
+            feed = str(configured_feed).strip().lower()
+            return feed or None
+        if self._mode() == "paper":
+            return "indicative"
+        return None
+
+    def _option_daily_bar_end(self, *, as_of: date, start: datetime) -> datetime | None:
+        today_utc = datetime.now(timezone.utc).date()
+        if self._mode() == "paper" and as_of >= today_utc:
+            return None
+        if as_of >= today_utc:
+            return datetime.now(timezone.utc)
+        return start + timedelta(days=1)
 
     def _get_trading_client(self) -> Any:
         trading_client_class = _resolve_trading_client_class()
@@ -382,7 +413,11 @@ class AlpacaOptionsClient:
         _, request_class, _ = _resolve_option_data_classes()
         if client is None or request_class is None or not symbols:
             return {}
-        request = request_class(symbol_or_symbols=symbols)
+        request = _request_with_optional_feed(
+            request_class,
+            feed=self._option_data_feed(),
+            symbol_or_symbols=symbols,
+        )
         raw_quotes = client.get_option_latest_quote(request)
         quotes = raw_quotes if isinstance(raw_quotes, dict) else getattr(raw_quotes, "data", {})
         out: dict[str, dict[str, Any]] = {}
@@ -563,7 +598,9 @@ class AlpacaOptionsClient:
         _, _, request_class = _resolve_option_data_classes()
         if client is None or request_class is None:
             raise RuntimeError("live Alpaca option data client is unavailable")
-        request = request_class(
+        request = _request_with_optional_feed(
+            request_class,
+            feed=self._option_data_feed(),
             underlying_symbol=symbol,
             expiration_date_gte=as_of + timedelta(days=min_dte),
             expiration_date_lte=as_of + timedelta(days=max_dte),
@@ -693,10 +730,12 @@ class AlpacaOptionsClient:
         market_data = self.config.get("market_data", {})
         batch_size = max(1, int(market_data.get("option_bar_batch_size", 200)))
         start = datetime.combine(as_of, datetime.min.time(), tzinfo=timezone.utc)
-        end = datetime.now(timezone.utc) if as_of == date.today() else start + timedelta(days=1)
+        end = self._option_daily_bar_end(as_of=as_of, start=start)
         out: dict[str, int] = {}
         for batch in _chunks(unique_symbols, batch_size):
-            request = request_class(
+            request = _request_with_optional_feed(
+                request_class,
+                feed=self._option_data_feed(),
                 symbol_or_symbols=batch,
                 timeframe=timeframe_class.Day,
                 start=start,

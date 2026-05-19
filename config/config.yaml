@@ -61,6 +61,10 @@ market_data:
   use_sample_data: false
   option_chain_strike_window_pct: 0.20
   option_bar_batch_size: 200
+  # Paper mode defaults option quote/chain requests to Alpaca's indicative
+  # feed to avoid realtime OPRA subscription failures. Leave option_feed unset
+  # for live trading unless a realtime options data subscription is available.
+  # option_feed:
   # Tradable Alpaca stock/ETF proxy used for the optional VIX-aware
   # IV-rank scaling gate when sample data is disabled. Override this
   # if your data provider exposes a different volatility proxy.
