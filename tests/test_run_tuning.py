@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
 from contextlib import redirect_stdout
+from datetime import datetime
 from io import StringIO
+from pathlib import Path
 from unittest.mock import patch
 
 from core.backtest_engine import BacktestResult
@@ -34,6 +38,15 @@ class RunTuningTests(unittest.TestCase):
                 run_tuning.main(["--days", "7", "--walk-forward"])
 
         self.assertEqual(seen_days, [3, 4])
+
+    def test_tuning_report_reuses_filename_timestamp_in_payload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = run_tuning._write_tuning_report(runs=[], output_dir=Path(tmp), top=1)
+            payload = json.loads(path.read_text(encoding="utf-8"))
+
+        filename_timestamp = path.stem.removeprefix("tuning_")
+        payload_timestamp = datetime.fromisoformat(payload["generated_at"]).strftime("%Y%m%d-%H%M%S")
+        self.assertEqual(payload_timestamp, filename_timestamp)
 
 
 if __name__ == "__main__":

@@ -12,8 +12,8 @@ fi
 
 find "$REPORTS_DIR" -type f \
   \( -name '*.json' -o -name '*.md' -o -name '*.csv' -o -name '*.log' \) \
-  -mtime "+$GZIP_AFTER_DAYS" ! -name '*.gz' -print0 \
-  | xargs -0 -r gzip -9
+  -mtime "+$GZIP_AFTER_DAYS" ! -name '*.gz' \
+  -exec gzip -9 -- {} +
 
-find "$REPORTS_DIR" -type f -mtime "+$DELETE_AFTER_DAYS" -print0 \
-  | xargs -0 -r rm -f
+find "$REPORTS_DIR" -type f -mtime "+$DELETE_AFTER_DAYS" \
+  -exec rm -f -- {} +

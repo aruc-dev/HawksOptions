@@ -147,9 +147,10 @@ def _top_runs(runs: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]
 
 def _write_tuning_report(*, runs: list[dict[str, Any]], output_dir: Path, top: int) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / f"tuning_{datetime.now(timezone.utc):%Y%m%d-%H%M%S}.json"
+    now = datetime.now(timezone.utc)
+    path = output_dir / f"tuning_{now:%Y%m%d-%H%M%S}.json"
     payload = {
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "generated_at": now.isoformat(timespec="seconds"),
         "objective": "maximize sharpe + profit factor + expectancy with max drawdown <= 8%",
         "top": _top_runs(runs, limit=top),
         "run_count": len(runs),

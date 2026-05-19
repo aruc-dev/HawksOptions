@@ -56,6 +56,13 @@ class SystemdSecretsTests(unittest.TestCase):
         self.assertIn("umask 077", text)
         subprocess.run(["bash", "-n", str(script)], check=True)
 
+    def test_prune_reports_script_passes_filenames_after_option_separator(self):
+        script = ROOT / "scripts" / "prune_reports.sh"
+        text = script.read_text(encoding="utf-8")
+        self.assertIn("gzip -9 --", text)
+        self.assertIn("rm -f --", text)
+        subprocess.run(["bash", "-n", str(script)], check=True)
+
     def _write_valid_existing_file(self, path: str):
         Path(path).write_text(
             "ALPACA_OPTIONS_PAPER_API_KEY='old-key'\n"

@@ -50,8 +50,7 @@ def _apply_backtest_source(
     if historical_data_file:
         backtest_cfg["historical_data_file"] = historical_data_file
         backtest_cfg.pop("fixture_file", None)
-    if fixture_fallback_to_sample:
-        backtest_cfg["fixture_fallback_to_sample"] = True
+    backtest_cfg["fixture_fallback_to_sample"] = bool(fixture_fallback_to_sample)
     return config
 
 
