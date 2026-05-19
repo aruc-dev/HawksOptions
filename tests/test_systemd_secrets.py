@@ -63,9 +63,35 @@ class SystemdSecretsTests(unittest.TestCase):
     def test_prune_reports_script_passes_filenames_after_option_separator(self):
         script = ROOT / "scripts" / "prune_reports.sh"
         text = script.read_text(encoding="utf-8")
-        self.assertIn("gzip -9 --", text)
+        self.assertIn("gzip -9 -c --", text)
+        self.assertIn("touch -r", text)
+        self.assertIn("mv -f --", text)
         self.assertIn("rm -f --", text)
         subprocess.run(["bash", "-n", str(script)], check=True)
+
+    def test_prune_reports_preserves_mtime_when_compressing(self):
+        script = ROOT / "scripts" / "prune_reports.sh"
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "scan.json"
+            report.write_text("{}", encoding="utf-8")
+            old_mtime = time.time() - (2 * 24 * 60 * 60)
+            os.utime(report, (old_mtime, old_mtime))
+
+            subprocess.run(
+                ["bash", str(script)],
+                check=True,
+                env={
+                    **os.environ,
+                    "HAWKSOPTIONS_REPORTS_DIR": tmp,
+                    "HAWKSOPTIONS_GZIP_REPORTS_AFTER_DAYS": "0",
+                    "HAWKSOPTIONS_DELETE_REPORTS_AFTER_DAYS": "90",
+                },
+            )
+
+            compressed = Path(f"{report}.gz")
+            self.assertFalse(report.exists())
+            self.assertTrue(compressed.exists())
+            self.assertEqual(int(compressed.stat().st_mtime), int(old_mtime))
 
     def _write_valid_existing_file(self, path: str):
         Path(path).write_text(

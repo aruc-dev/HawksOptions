@@ -10,10 +10,22 @@ if [[ ! -d "$REPORTS_DIR" ]]; then
   exit 0
 fi
 
+compress_preserving_mtime() {
+  local source="$1"
+  local target="${source}.gz"
+  local tmp="${target}.$$"
+
+  gzip -9 -c -- "$source" > "$tmp"
+  touch -r "$source" "$tmp"
+  mv -f -- "$tmp" "$target"
+  rm -f -- "$source"
+}
+export -f compress_preserving_mtime
+
 find "$REPORTS_DIR" -type f \
   \( -name '*.json' -o -name '*.md' -o -name '*.csv' -o -name '*.log' \) \
   -mtime "+$GZIP_AFTER_DAYS" ! -name '*.gz' \
-  -exec gzip -9 -- {} +
+  -exec bash -c 'for source do compress_preserving_mtime "$source"; done' _ {} +
 
 find "$REPORTS_DIR" -type f -mtime "+$DELETE_AFTER_DAYS" \
   -exec rm -f -- {} +
