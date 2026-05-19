@@ -114,6 +114,14 @@ class ProductionReadinessWorkflowTests(unittest.TestCase):
         self.assertNotIn("historical_provider", patched["backtest"])
         self.assertFalse(patched["backtest"]["fixture_fallback_to_sample"])
 
+    def test_backtest_cli_rejects_end_before_start(self):
+        with (
+            patch.object(run_backtest_cli, "run_backtest") as run_backtest,
+            self.assertRaisesRegex(SystemExit, "--end must be on or after --start-date"),
+        ):
+            run_backtest_cli.main(["--start-date", "2026-04-24", "--end", "2026-04-23"])
+        run_backtest.assert_not_called()
+
     def test_tuning_top_runs_prefers_constraint_passing_runs(self):
         runs = [
             {"label": "bad", "sharpe": 4.0, "profit_factor": 0.5, "expectancy": -1.0, "drawdown_pct": 2.0},

@@ -87,7 +87,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.end:
         if start_date is None:
             raise SystemExit("--end requires --start or --start-date")
-        days = max(1, (date.fromisoformat(args.end) - start_date).days + 1)
+        end_date = date.fromisoformat(args.end)
+        if end_date < start_date:
+            raise SystemExit("--end must be on or after --start-date")
+        days = (end_date - start_date).days + 1
     result, report_path = run_backtest(
         config=config,
         strategies=strategies,

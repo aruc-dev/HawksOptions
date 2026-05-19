@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -26,8 +27,25 @@ def assert_runtime_allowed(config: dict[str, Any], *, halt_file: Path) -> None:
 
 def write_halt_file(path: Path, *, reason: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(reason.strip() or "manual halt", encoding="utf-8")
-    path.chmod(0o600)
+    payload = reason.strip() or "manual halt"
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            delete=False,
+        ) as handle:
+            tmp_path = Path(handle.name)
+            os.fchmod(handle.fileno(), 0o600)
+            handle.write(payload)
+        os.replace(tmp_path, path)
+        path.chmod(0o600)
+    except Exception:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
+        raise
     return path
 
 
