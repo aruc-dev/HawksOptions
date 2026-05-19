@@ -30,23 +30,41 @@ def reconcile_state(
     broker_qty = _broker_contract_qty(broker_positions)
     missing_local = sorted(symbol for symbol in broker_qty if symbol not in local_qty)
     orphan_local = sorted(symbol for symbol in local_qty if symbol not in broker_qty)
+    partial_orphan_local = _partial_orphan_contracts(local_positions, orphan_local)
+    broker_only_short = _broker_only_short_contracts(broker_positions, missing_local)
     mismatched_qty = sorted(
         symbol
         for symbol in broker_qty.keys() & local_qty.keys()
         if broker_qty[symbol] != local_qty[symbol]
     )
+    halted = bool(mismatched_qty or partial_orphan_local or broker_only_short)
     report = {
         "generated_at": as_of.isoformat(timespec="seconds"),
         "missing_local": missing_local,
         "orphan_local": orphan_local,
+        "partial_orphan_local": partial_orphan_local,
+        "broker_only_short": broker_only_short,
         "mismatched_qty": mismatched_qty,
-        "halted": bool(mismatched_qty),
+        "halted": halted,
     }
     if missing_local or orphan_local:
-        local_positions = _apply_nonfatal_reconciliation(local_positions, broker_positions, missing_local, orphan_local, as_of=as_of)
+        local_positions = _apply_nonfatal_reconciliation(
+            local_positions,
+            broker_positions,
+            [symbol for symbol in missing_local if symbol not in set(broker_only_short)],
+            [symbol for symbol in orphan_local if symbol not in set(partial_orphan_local)],
+            as_of=as_of,
+        )
         save_positions(positions_path, local_positions)
-    if mismatched_qty:
-        write_halt_file(halt_file, reason="reconciliation_mismatched_qty:" + ",".join(mismatched_qty))
+    if halted:
+        reasons = []
+        if mismatched_qty:
+            reasons.append("mismatched_qty:" + ",".join(mismatched_qty))
+        if partial_orphan_local:
+            reasons.append("partial_orphan_local:" + ",".join(partial_orphan_local))
+        if broker_only_short:
+            reasons.append("broker_only_short:" + ",".join(broker_only_short))
+        write_halt_file(halt_file, reason="reconciliation_" + ";".join(reasons))
     report_path = _write_reconciliation_report(reports_dir, report, as_of=as_of)
     report["report_path"] = str(report_path)
     return report
@@ -81,6 +99,28 @@ def _local_contract_qty(positions: list[PositionSnapshot]) -> dict[str, int]:
 
 def _broker_contract_qty(positions: list[dict[str, Any]]) -> dict[str, int]:
     return {str(position["symbol"]): _int_qty(position.get("qty")) for position in positions}
+
+
+def _partial_orphan_contracts(positions: list[PositionSnapshot], orphan_local: list[str]) -> list[str]:
+    orphan_set = set(orphan_local)
+    partial: set[str] = set()
+    for position in positions:
+        if position.closed_at is not None:
+            continue
+        symbols = {leg.contract.contract_symbol for leg in position.legs}
+        orphaned = symbols & orphan_set
+        if orphaned and orphaned != symbols:
+            partial.update(orphaned)
+    return sorted(partial)
+
+
+def _broker_only_short_contracts(positions: list[dict[str, Any]], missing_local: list[str]) -> list[str]:
+    missing_set = set(missing_local)
+    return sorted(
+        str(position["symbol"])
+        for position in positions
+        if str(position["symbol"]) in missing_set and _int_qty(position.get("qty")) < 0
+    )
 
 
 def _apply_nonfatal_reconciliation(
@@ -124,7 +164,13 @@ def _position_from_broker_option(position: dict[str, Any], *, opened_at: datetim
         meta={"reconciled": True, "source": "broker_position"},
     )
     side = "buy_to_open" if _int_qty(position.get("qty")) > 0 else "sell_to_open"
-    max_loss = max(0.0, avg_entry * 100.0 * qty)
+    max_loss = _broker_option_max_loss(
+        side=side,
+        option_type=contract.option_type,
+        strike=contract.strike,
+        avg_entry=avg_entry,
+        qty=qty,
+    )
     return PositionSnapshot(
         strategy_id=f"reconciled-{symbol}",
         strategy_name="strategy_unknown",
@@ -137,6 +183,14 @@ def _position_from_broker_option(position: dict[str, Any], *, opened_at: datetim
         loss_stop_multiple=1.0,
         roll_threshold_delta=None,
     )
+
+
+def _broker_option_max_loss(*, side: str, option_type: str, strike: float, avg_entry: float, qty: int) -> float:
+    if side == "buy_to_open":
+        return max(0.0, avg_entry * 100.0 * qty)
+    if option_type == "put":
+        return max(0.0, (strike - avg_entry) * 100.0 * qty)
+    raise ValueError("broker-only short calls require manual reconciliation")
 
 
 def _write_reconciliation_report(reports_dir: Path, payload: dict[str, Any], *, as_of: datetime) -> Path:

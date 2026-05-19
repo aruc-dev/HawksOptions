@@ -104,7 +104,7 @@ class BaseStrategy(ABC):
         scaled_budget = risk_budget * size_fraction
         budget_qty = int(scaled_budget // unit_max_loss)
         if budget_qty < 1:
-            return min(max_qty, 1)
+            return 0
         return max(0, min(max_qty, budget_qty))
 
     def apply_contract_quantity(self, order: StrategyOrder, qty: int) -> StrategyOrder:

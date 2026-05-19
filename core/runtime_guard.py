@@ -27,6 +27,7 @@ def assert_runtime_allowed(config: dict[str, Any], *, halt_file: Path) -> None:
 def write_halt_file(path: Path, *, reason: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(reason.strip() or "manual halt", encoding="utf-8")
+    path.chmod(0o600)
     return path
 
 

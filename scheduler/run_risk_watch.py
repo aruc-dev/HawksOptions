@@ -42,7 +42,11 @@ def run_risk_watch(*, config: dict | None = None, dry_run: bool = True) -> dict[
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run elevated risk watch")
-    parser.add_argument("--dry-run", action="store_true", help="Accepted for interface compatibility")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Run checks without persisting elevated-position snapshots or metrics.",
+    )
     args = parser.parse_args(argv)
     print(json.dumps(run_risk_watch(dry_run=args.dry_run), indent=2))
     return 0

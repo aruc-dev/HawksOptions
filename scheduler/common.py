@@ -47,12 +47,14 @@ def load_runtime(config: dict[str, Any] | None = None) -> tuple[dict[str, Any], 
     reconciliation = config.get("reconciliation", {})
     if isinstance(reconciliation, dict) and bool(reconciliation.get("enabled", False)):
         if not (client.use_sample_data and bool(reconciliation.get("skip_when_using_sample_data", True))):
-            reconcile_state(
+            report = reconcile_state(
                 client=client,
                 positions_path=paths["positions"],
                 reports_dir=paths["reports_dir"],
                 halt_file=paths["halt_file"],
             )
+            if report.get("halted"):
+                assert_runtime_allowed(config, halt_file=paths["halt_file"])
     return config, client, paths
 
 

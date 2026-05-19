@@ -147,8 +147,7 @@ class RunScanTests(unittest.TestCase):
 
     def test_scan_logs_deterministic_rejects_before_ai(self):
         config = _sample_scan_config()
-        config["account"]["max_single_position_risk_pct"] = 0.000001
-        config["account"]["max_portfolio_risk_pct"] = 0.000001
+        config["account"]["options_level"] = 1
         with TemporaryDirectory() as tmp:
             config["reporting"]["reports_dir"] = tmp
             result = scan_market(config=config, as_of=date(2026, 4, 23), dry_run=True)

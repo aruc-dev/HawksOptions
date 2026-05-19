@@ -14,13 +14,14 @@ def build_audit_pack(*, trading_day: date, reports_dir: Path, data_files: Iterab
     output_dir.mkdir(parents=True, exist_ok=True)
     pack_path = output_dir / f"hawksoptions_audit_{trading_day.isoformat()}.zip"
     manifest: dict[str, str] = {}
+    archive_root = reports_dir.parent
     candidates = _audit_candidates(trading_day=trading_day, reports_dir=reports_dir, data_files=data_files)
     with zipfile.ZipFile(pack_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for path in candidates:
             if not path.is_file():
                 continue
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
-            arcname = str(path.relative_to(path.parents[1] if path.parent.name in {"reports", "data"} else path.parent))
+            arcname = _archive_name(path, root=archive_root)
             manifest[arcname] = digest
             archive.write(path, arcname)
         manifest_bytes = json.dumps(manifest, indent=2, sort_keys=True).encode("utf-8")
@@ -41,3 +42,10 @@ def _audit_candidates(*, trading_day: date, reports_dir: Path, data_files: Itera
         ):
             candidates.extend(sorted(reports_dir.glob(pattern)))
     return candidates
+
+
+def _archive_name(path: Path, *, root: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(root.resolve()))
+    except ValueError:
+        return str(Path("external") / path.name)

@@ -9,16 +9,22 @@ from typing import Any
 
 def write_metrics_textfile(path: Path, metrics: dict[str, float | int]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    lines = [
-        "# HELP hawksoptions_runtime_metric HawksOptions scheduler metric.",
-        "# TYPE hawksoptions_runtime_metric gauge",
-    ]
+    lines = []
     for name, value in sorted(metrics.items()):
-        safe_name = "hawksoptions_" + "".join(ch if ch.isalnum() else "_" for ch in name.lower())
+        safe_name = _metric_name(name)
+        lines.append(f"# HELP {safe_name} HawksOptions scheduler metric.")
+        lines.append(f"# TYPE {safe_name} gauge")
         lines.append(f"{safe_name} {float(value)}")
-    lines.append(f"hawksoptions_metrics_generated_at {datetime.now(timezone.utc).timestamp():.0f}")
+    generated = "hawksoptions_metrics_generated_at"
+    lines.append(f"# HELP {generated} Unix timestamp when this textfile was generated.")
+    lines.append(f"# TYPE {generated} gauge")
+    lines.append(f"{generated} {datetime.now(timezone.utc).timestamp():.0f}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
+
+
+def _metric_name(name: str) -> str:
+    return "hawksoptions_" + "".join(ch if ch.isalnum() else "_" for ch in name.lower())
 
 
 def risk_check_metrics(payload: dict[str, Any]) -> dict[str, float | int]:

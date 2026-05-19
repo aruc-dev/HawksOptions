@@ -180,6 +180,7 @@ class ProductionReadinessWorkflowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             halt_file = Path(tmp) / "HALTED"
             write_halt_file(halt_file, reason="operator test")
+            self.assertEqual(halt_file.stat().st_mode & 0o777, 0o600)
             with self.assertRaisesRegex(RuntimeError, "hawksoptions_halted"):
                 assert_runtime_allowed({"mode": "paper"}, halt_file=halt_file)
             halt_file.unlink()
@@ -194,6 +195,8 @@ class ProductionReadinessWorkflowTests(unittest.TestCase):
             text = path.read_text(encoding="utf-8")
 
         self.assertIn("hawksoptions_elevated_count 2.0", text)
+        self.assertIn("# HELP hawksoptions_elevated_count", text)
+        self.assertNotIn("hawksoptions_runtime_metric", text)
 
     def test_auto_close_filter_keeps_non_critical_actions_plan_only(self):
         order = StrategyOrder(
@@ -277,6 +280,64 @@ class ProductionReadinessWorkflowTests(unittest.TestCase):
             self.assertEqual(report["mismatched_qty"], ["SPY260619P00500000"])
             self.assertTrue(halt_file.exists())
 
+    def test_reconciler_halts_on_partial_orphaned_multileg_position(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            positions_path = Path(tmp) / "positions.json"
+            reports_dir = Path(tmp) / "reports"
+            halt_file = Path(tmp) / "HALTED"
+            order = StrategyOrder(
+                strategy_name="vertical_spread",
+                strategy_id="vertical_spread-SPY-20260423",
+                underlying="SPY",
+                legs=[
+                    OrderLeg(contract=_option("SPY260619P00500000"), side="sell_to_open", qty=1),
+                    OrderLeg(contract=_option("SPY260619P00495000"), side="buy_to_open", qty=1),
+                ],
+                max_loss=100.0,
+                max_profit=20.0,
+                required_buying_power=100.0,
+                profit_take_pct=0.5,
+                loss_stop_multiple=1.5,
+                roll_threshold_delta=-0.4,
+                iv_rank=50.0,
+            )
+            save_positions(positions_path, [position_from_order(order)])
+
+            report = reconcile_state(
+                client=_BrokerPositionsClient([
+                    {"symbol": "SPY260619P00500000", "qty": "-1", "avg_entry_price": "1.25", "current_price": "1.30"}
+                ]),
+                positions_path=positions_path,
+                reports_dir=reports_dir,
+                halt_file=halt_file,
+            )
+            positions = load_positions(positions_path)
+
+            self.assertEqual(report["partial_orphan_local"], ["SPY260619P00495000"])
+            self.assertTrue(report["halted"])
+            self.assertTrue(halt_file.exists())
+            self.assertEqual(positions[0].strategy_id, "vertical_spread-SPY-20260423")
+
+    def test_reconciler_halts_on_broker_only_short_option(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            positions_path = Path(tmp) / "positions.json"
+            reports_dir = Path(tmp) / "reports"
+            halt_file = Path(tmp) / "HALTED"
+
+            report = reconcile_state(
+                client=_BrokerPositionsClient([
+                    {"symbol": "SPY260619C00500000", "qty": "-1", "avg_entry_price": "1.25", "current_price": "1.30"}
+                ]),
+                positions_path=positions_path,
+                reports_dir=reports_dir,
+                halt_file=halt_file,
+            )
+
+            self.assertEqual(report["broker_only_short"], ["SPY260619C00500000"])
+            self.assertTrue(report["halted"])
+            self.assertTrue(halt_file.exists())
+            self.assertEqual(load_positions(positions_path), [])
+
     def test_audit_pack_contains_manifest_and_daily_artifacts(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -300,7 +361,8 @@ class ProductionReadinessWorkflowTests(unittest.TestCase):
                 names = set(archive.namelist())
 
         self.assertIn("manifest.sha256.json", names)
-        self.assertTrue(any(name.endswith("scan_2026-04-23_120000Z.json") for name in names))
+        self.assertIn("reports/candidate_scans/scan_2026-04-23_120000Z.json", names)
+        self.assertIn("data/trades.csv", names)
 
 
 if __name__ == "__main__":
