@@ -59,7 +59,7 @@ market_data:
   # Paper EC2 should scan Alpaca market data. Set this to true only in
   # config.local.yaml for local deterministic tests or sample dry-runs.
   use_sample_data: false
-  option_chain_strike_window_pct: 0.12
+  option_chain_strike_window_pct: 0.20
   option_bar_batch_size: 200
   # Tradable Alpaca stock/ETF proxy used for the optional VIX-aware
   # IV-rank scaling gate when sample data is disabled. Override this

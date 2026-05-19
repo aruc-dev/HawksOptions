@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import unittest
 from datetime import date, datetime, timezone
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 import core.alpaca_options_client as client_module
@@ -102,6 +104,11 @@ class _OptionChainDataClient:
 
     def get_option_bars(self, request):
         return {"SPY260619P00500000": [{"volume": 123}]}
+
+
+class _NoDailyBarOptionChainDataClient(_OptionChainDataClient):
+    def get_option_bars(self, request):
+        return {}
 
 
 class _TradingClient:
@@ -230,6 +237,56 @@ class AlpacaOptionsClientTests(unittest.TestCase):
         self.assertEqual(contract.underlying_price, 500.0)
         self.assertEqual(contract.meta["source"], "alpaca_option_chain")
         self.assertEqual(contract.meta["volume_source"], "daily_bar")
+
+    def test_live_underlying_snapshot_derives_iv_from_option_chain(self):
+        config = load_config()
+        config["market_data"]["use_sample_data"] = False
+        with TemporaryDirectory() as tmp:
+            config["reporting"]["iv_history_file"] = str(Path(tmp) / "missing_iv_history.csv")
+            with (
+                patch.dict("os.environ", {"ALPACA_OPTIONS_PAPER_API_KEY": "key", "ALPACA_OPTIONS_PAPER_SECRET_KEY": "secret"}),
+                patch.object(client_module, "OptionHistoricalDataClient", _OptionChainDataClient),
+                patch.object(client_module, "OptionLatestQuoteRequest", _LatestQuoteRequest),
+                patch.object(client_module, "OptionChainRequest", _KeywordRequest),
+                patch.object(client_module, "StockHistoricalDataClient", _SpyStockDataClient),
+                patch.object(client_module, "StockLatestQuoteRequest", _LatestQuoteRequest),
+            ):
+                client = AlpacaOptionsClient(config, use_sample_data=False)
+                snapshot = client.get_underlying_snapshot("SPY", as_of=date(2026, 4, 23))
+
+        self.assertEqual(snapshot["price"], 500.0)
+        self.assertEqual(snapshot["current_iv"], 0.22)
+        self.assertEqual(snapshot["iv_rank"], 50.0)
+        self.assertEqual(snapshot["iv_percentile"], 50.0)
+        self.assertEqual(snapshot["iv_source"], "alpaca_option_chain")
+        self.assertEqual(snapshot["iv_rank_source"], "neutral_no_history")
+
+    def test_live_option_chain_does_not_treat_latest_trade_size_as_daily_volume(self):
+        config = load_config()
+        config["market_data"]["use_sample_data"] = False
+        with (
+            patch.dict("os.environ", {"ALPACA_OPTIONS_PAPER_API_KEY": "key", "ALPACA_OPTIONS_PAPER_SECRET_KEY": "secret"}),
+            patch.object(client_module, "TradingClient", _TradingClient),
+            patch.object(client_module, "OptionHistoricalDataClient", _NoDailyBarOptionChainDataClient),
+            patch.object(client_module, "OptionLatestQuoteRequest", _LatestQuoteRequest),
+            patch.object(client_module, "OptionChainRequest", _KeywordRequest),
+            patch.object(client_module, "OptionBarsRequest", _KeywordRequest),
+            patch.object(client_module, "TimeFrame", _TimeFrame),
+            patch.object(client_module, "StockHistoricalDataClient", _SpyStockDataClient),
+            patch.object(client_module, "StockLatestQuoteRequest", _LatestQuoteRequest),
+            patch.object(client_module, "GetOptionContractsRequest", _KeywordRequest),
+            patch.object(client_module, "AssetStatus", _AssetStatus),
+        ):
+            client = AlpacaOptionsClient(config, use_sample_data=False)
+            chain = client.get_option_chain("SPY", as_of=date(2026, 4, 23))
+
+        self.assertEqual(chain[0].volume, 0)
+        self.assertEqual(chain[0].meta["volume_source"], "unavailable")
+
+    def test_default_live_chain_strike_window_covers_far_wings(self):
+        client = AlpacaOptionsClient(load_config(), use_sample_data=False)
+
+        self.assertEqual(client._live_chain_strike_bounds(100.0), (80.0, 120.0))
 
     def test_occ_symbols_round_trip(self):
         client = AlpacaOptionsClient(load_config(), use_sample_data=True)

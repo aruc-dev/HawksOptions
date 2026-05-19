@@ -9,12 +9,13 @@ from collections.abc import Iterator
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from core.config import load_config, load_underlyings
 from core.greeks_calculator import black_scholes_greeks
-from core.iv_rank_tracker import compute_iv_percentile, compute_iv_rank
+from core.iv_rank_tracker import compute_iv_percentile, compute_iv_rank, load_iv_history
 from core.models import OptionContract
 from core.occ import format_occ_symbol, parse_occ_symbol
 
@@ -422,9 +423,18 @@ class AlpacaOptionsClient:
             raise RuntimeError(f"live Alpaca stock quote is unavailable for {symbol}")
         price = round((bid + ask) / 2.0, 4)
         meta = deepcopy(self._underlyings.get(symbol, {"symbol": symbol}))
-        current_iv = _optional_float(meta.get("current_iv")) or 0.0
-        iv_rank = _optional_float(meta.get("iv_rank"))
+        iv_snapshot = self._live_underlying_iv_snapshot(symbol, as_of=as_of, spot=price)
+        static_current_iv = _optional_float(meta.get("current_iv"))
+        static_iv_rank = _optional_float(meta.get("iv_rank"))
+        current_iv = static_current_iv
+        if current_iv is None:
+            current_iv = float(iv_snapshot.get("current_iv", 0.0))
+        iv_rank = static_iv_rank
+        if iv_rank is None:
+            iv_rank = _optional_float(iv_snapshot.get("iv_rank"))
         iv_percentile = _optional_float(meta.get("iv_percentile"))
+        if iv_percentile is None:
+            iv_percentile = _optional_float(iv_snapshot.get("iv_percentile"))
         snapshot = {
             **meta,
             "symbol": symbol,
@@ -435,6 +445,8 @@ class AlpacaOptionsClient:
             "realized_vol_20d": float(meta.get("realized_vol_20d", 0.0)),
             "atr_pct": float(meta.get("atr_pct", 0.0)),
             "source": "alpaca_stock_latest_quote",
+            "iv_source": "underlying_metadata" if static_current_iv is not None else iv_snapshot.get("iv_source", "unavailable"),
+            "iv_rank_source": "underlying_metadata" if static_iv_rank is not None else iv_snapshot.get("iv_rank_source", "unavailable"),
         }
         self._live_underlying_cache[cache_key] = snapshot
         return deepcopy(snapshot)
@@ -493,7 +505,7 @@ class AlpacaOptionsClient:
             if daily_volume is not None:
                 volume, volume_source = daily_volume, "daily_bar"
             else:
-                volume, volume_source = _live_option_volume(trade)
+                volume, volume_source = 0, "unavailable"
             contract = OptionContract(
                 contract_symbol=contract_symbol,
                 underlying=str(parsed["underlying"]),
@@ -529,9 +541,59 @@ class AlpacaOptionsClient:
 
     def _live_chain_strike_bounds(self, spot: float) -> tuple[float, float]:
         market_data = self.config.get("market_data", {})
-        window_pct = float(market_data.get("option_chain_strike_window_pct", 0.12))
+        window_pct = float(market_data.get("option_chain_strike_window_pct", 0.20))
         window_pct = max(0.01, min(window_pct, 1.0))
         return round(max(0.01, spot * (1.0 - window_pct)), 2), round(spot * (1.0 + window_pct), 2)
+
+    def _live_underlying_iv_snapshot(self, symbol: str, *, as_of: date, spot: float) -> dict[str, Any]:
+        client = self._get_option_data_client()
+        _, _, request_class = _resolve_option_data_classes()
+        if client is None or request_class is None:
+            return {"current_iv": 0.0, "iv_rank": 0.0, "iv_percentile": 0.0, "iv_source": "unavailable", "iv_rank_source": "unavailable"}
+        min_dte, max_dte = self._live_chain_dte_range()
+        strike_gte, strike_lte = self._live_chain_strike_bounds(spot)
+        request = request_class(
+            underlying_symbol=symbol,
+            expiration_date_gte=as_of + timedelta(days=min_dte),
+            expiration_date_lte=as_of + timedelta(days=max_dte),
+            strike_price_gte=strike_gte,
+            strike_price_lte=strike_lte,
+        )
+        try:
+            raw_chain = client.get_option_chain(request)
+        except Exception as exc:
+            _LOGGER.warning("live option IV snapshot unavailable for %s: %s", symbol, exc)
+            return {"current_iv": 0.0, "iv_rank": 0.0, "iv_percentile": 0.0, "iv_source": "alpaca_option_chain_error", "iv_rank_source": "unavailable"}
+        snapshots = raw_chain if isinstance(raw_chain, dict) else getattr(raw_chain, "data", {})
+        if not isinstance(snapshots, dict):
+            return {"current_iv": 0.0, "iv_rank": 0.0, "iv_percentile": 0.0, "iv_source": "unavailable", "iv_rank_source": "unavailable"}
+        chain_ivs = [
+            iv
+            for iv in (_optional_float(_object_value(snapshot, "implied_volatility")) for snapshot in snapshots.values())
+            if iv is not None and iv > 0
+        ]
+        if not chain_ivs:
+            return {"current_iv": 0.0, "iv_rank": 0.0, "iv_percentile": 0.0, "iv_source": "unavailable", "iv_rank_source": "unavailable"}
+        current_iv = round(_median(chain_ivs), 6)
+        reporting = self.config.get("reporting", {})
+        history_path = Path(str(reporting.get("iv_history_file", "data/iv_rank_history.csv")))
+        lookback_days = int(self.config.get("market_data", {}).get("iv_history_lookback_days", 365))
+        trailing_ivs = load_iv_history(history_path, symbol, lookback_days=lookback_days)
+        if trailing_ivs:
+            return {
+                "current_iv": current_iv,
+                "iv_rank": compute_iv_rank(current_iv, trailing_ivs),
+                "iv_percentile": compute_iv_percentile(current_iv, trailing_ivs),
+                "iv_source": "alpaca_option_chain",
+                "iv_rank_source": "iv_history",
+            }
+        return {
+            "current_iv": current_iv,
+            "iv_rank": 50.0,
+            "iv_percentile": 50.0,
+            "iv_source": "alpaca_option_chain",
+            "iv_rank_source": "neutral_no_history",
+        }
 
     def _get_live_option_contract_metadata(
         self,
@@ -723,13 +785,6 @@ def _parse_int(value: Any, *, default: int = 0) -> int:
         return default
 
 
-def _live_option_volume(trade: Any) -> tuple[int, str]:
-    size = _quote_value(trade, "size", "s")
-    if size is None:
-        return 0, "unavailable"
-    return max(0, int(size)), "latest_trade_size"
-
-
 def _date_text(value: Any) -> str | None:
     if value in (None, ""):
         return None
@@ -755,6 +810,14 @@ def _quote_value(quote: Any, *names: str) -> float | None:
         except (TypeError, ValueError):
             continue
     return None
+
+
+def _median(values: list[float]) -> float:
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / 2.0
 
 
 def _quote_datetime(quote: Any, *names: str) -> datetime | None:

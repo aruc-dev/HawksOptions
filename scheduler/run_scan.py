@@ -404,6 +404,30 @@ def _symbol_scan_health(
     }
 
 
+def _unavailable_symbol_scan_health(*, symbol: str, reason: str) -> dict[str, Any]:
+    return {
+        "symbol": symbol,
+        "chain_available": False,
+        "contract_count": 0,
+        "expiration_count": 0,
+        "min_dte": None,
+        "max_dte": None,
+        "missing_greeks_contract_count": 0,
+        "missing_greeks_by_field": {"delta": 0, "theta": 0, "vega": 0, "gamma": 0},
+        "missing_quote_timestamps": 0,
+        "stale_quote_count": 0,
+        "stale_quote_fallback_count": 0,
+        "invalid_quote_count": 0,
+        "wide_quote_count": 0,
+        "candidate_count": 0,
+        "accepted_count": 0,
+        "rejected_count": 0,
+        "top_rejection_reasons": {},
+        "context_available": False,
+        "context_error": reason,
+    }
+
+
 def _scan_health_summary(
     *,
     symbol_health: list[dict[str, Any]],
@@ -680,14 +704,29 @@ def scan_market(*, config: dict[str, Any], as_of: date | None = None, dry_run: b
         else {}
     )
     for underlying in underlyings:
-        context = build_context(
-            config=config,
-            client=client,
-            underlying=underlying,
-            account=account,
-            open_positions=positions,
-            as_of=as_of,
-        )
+        try:
+            context = build_context(
+                config=config,
+                client=client,
+                underlying=underlying,
+                account=account,
+                open_positions=positions,
+                as_of=as_of,
+            )
+        except Exception as exc:
+            symbol = str(underlying.get("symbol", ""))
+            reason = f"context_unavailable:{type(exc).__name__}"
+            _LOGGER.warning("scan context unavailable for %s: %s", symbol, exc)
+            symbol_health.append(_unavailable_symbol_scan_health(symbol=symbol, reason=str(exc)))
+            rejected.append(
+                {
+                    "underlying": symbol,
+                    "strategy": "context",
+                    "reasons": [reason],
+                    "stage": "context",
+                }
+            )
+            continue
         symbol_health.append(
             _symbol_scan_health(
                 context,

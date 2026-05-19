@@ -5,6 +5,7 @@ import unittest
 from datetime import date, datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from core.config import load_config
 from core.models import OptionContract, StrategyContext
@@ -24,6 +25,20 @@ class _VolatilityClient:
     def get_market_volatility_snapshot(self, *, as_of):
         self.calls += 1
         raise RuntimeError("provider offline")
+
+
+class _ContextFailureClient:
+    def get_account(self):
+        return {
+            "equity": 100000.0,
+            "portfolio_value": 100000.0,
+            "cash": 50000.0,
+            "buying_power": 100000.0,
+            "options_level": 3,
+        }
+
+    def get_underlying_snapshot(self, symbol, as_of=None):
+        raise TimeoutError("stock quote timeout")
 
 
 class RunScanTests(unittest.TestCase):
@@ -247,6 +262,32 @@ class RunScanTests(unittest.TestCase):
         self.assertEqual(health["stale_quote_fallback_count"], 1)
         self.assertEqual(health["invalid_quote_count"], 1)
         self.assertEqual(health["wide_quote_count"], 1)
+
+    def test_scan_records_context_failure_without_aborting_symbol_loop(self):
+        config = load_config()
+        config["gates"]["vix_iv_rank_scaling"]["enabled"] = False
+        with TemporaryDirectory() as tmp:
+            config["reporting"]["reports_dir"] = tmp
+            paths = {
+                "positions": Path(tmp) / "positions.json",
+                "trade_log": Path(tmp) / "trades.csv",
+                "reports_dir": Path(tmp),
+            }
+            with (
+                patch("scheduler.run_scan.load_runtime", return_value=(config, _ContextFailureClient(), paths)),
+                patch("scheduler.run_scan.configured_underlyings", return_value=[{"symbol": "BAD"}]),
+                patch("scheduler.run_scan.current_positions", return_value=[]),
+                patch("scheduler.run_scan.refresh_positions", return_value=[]),
+                patch("scheduler.run_scan.build_enabled_strategies", return_value=[]),
+            ):
+                result = scan_market(config=config, as_of=date(2026, 4, 23), dry_run=True)
+
+        self.assertEqual(result["candidate_count"], 0)
+        self.assertEqual(result["rejected"][0]["stage"], "context")
+        self.assertEqual(result["rejected"][0]["underlying"], "BAD")
+        self.assertIn("context_unavailable:TimeoutError", result["rejected"][0]["reasons"])
+        self.assertEqual(result["scan_health"]["chain_unavailable_symbols"], ["BAD"])
+        self.assertEqual(result["scan_health"]["by_symbol"][0]["context_error"], "stock quote timeout")
 
 
 if __name__ == "__main__":
