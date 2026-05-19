@@ -17,6 +17,9 @@ from core.config import load_config
 from strategies import build_enabled_strategies
 
 
+DEFAULT_FIXTURE_FILE = "tests/fixtures/backtest_market_data.json"
+
+
 def _apply_backtest_source(
     config: dict,
     *,
@@ -32,7 +35,11 @@ def _apply_backtest_source(
             backtest_cfg["data_source"] = "sample"
         elif normalized in {"fixture", "historical-replay", "json-replay"}:
             backtest_cfg["data_source"] = "historical_replay"
-            if normalized != "fixture":
+            if normalized == "fixture":
+                backtest_cfg["fixture_file"] = DEFAULT_FIXTURE_FILE
+                backtest_cfg.pop("historical_data_file", None)
+                backtest_cfg.pop("historical_provider", None)
+            else:
                 backtest_cfg.pop("fixture_file", None)
         elif normalized in {"alpaca-history", "alpaca"}:
             backtest_cfg["data_source"] = "historical_replay"

@@ -98,6 +98,20 @@ class ProductionReadinessWorkflowTests(unittest.TestCase):
         self.assertNotIn("fixture_file", patched["backtest"])
         self.assertTrue(patched["backtest"]["fixture_fallback_to_sample"])
 
+    def test_backtest_cli_fixture_source_uses_fixture_not_default_history_file(self):
+        config = load_config()
+        patched = run_backtest_cli._apply_backtest_source(
+            config,
+            source="fixture",
+            historical_data_file=None,
+            fixture_fallback_to_sample=False,
+        )
+
+        self.assertEqual(patched["backtest"]["data_source"], "historical_replay")
+        self.assertEqual(patched["backtest"]["fixture_file"], "tests/fixtures/backtest_market_data.json")
+        self.assertNotIn("historical_data_file", patched["backtest"])
+        self.assertNotIn("historical_provider", patched["backtest"])
+
     def test_tuning_top_runs_prefers_constraint_passing_runs(self):
         runs = [
             {"label": "bad", "sharpe": 4.0, "profit_factor": 0.5, "expectancy": -1.0, "drawdown_pct": 2.0},

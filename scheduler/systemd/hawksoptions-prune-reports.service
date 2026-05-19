@@ -1,9 +1,14 @@
 [Unit]
 Description=HawksOptions report retention prune
-After=network.target
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=/opt/hawksoptions
-EnvironmentFile=-/etc/hawksoptions/hawksoptions.env
-ExecStart=/opt/hawksoptions/scripts/prune_reports.sh
+User=ec2-user
+Group=ec2-user
+WorkingDirectory=/home/ec2-user/HawksOptions
+EnvironmentFile=/etc/hawksoptions/hawksoptions.env
+ExecStart=/home/ec2-user/HawksOptions/scripts/prune_reports.sh
+TimeoutStartSec=15min
+Restart=no

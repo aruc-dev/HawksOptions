@@ -42,6 +42,20 @@ class SystemdSecretsTests(unittest.TestCase):
         self.assertIn("reusing fresh", text)
         subprocess.run(["bash", "-n", str(script)], check=True)
 
+    def test_prune_reports_service_matches_trading_job_layout(self):
+        text = (SYSTEMD_DIR / "hawksoptions-prune-reports.service").read_text(encoding="utf-8")
+        self.assertIn("User=ec2-user", text)
+        self.assertIn("Group=ec2-user", text)
+        self.assertIn("WorkingDirectory=/home/ec2-user/HawksOptions", text)
+        self.assertIn("ExecStart=/home/ec2-user/HawksOptions/scripts/prune_reports.sh", text)
+        self.assertNotIn("/opt/hawksoptions", text)
+
+    def test_kill_script_creates_halt_file_with_restrictive_umask(self):
+        script = ROOT / "scripts" / "kill.sh"
+        text = script.read_text(encoding="utf-8")
+        self.assertIn("umask 077", text)
+        subprocess.run(["bash", "-n", str(script)], check=True)
+
     def _write_valid_existing_file(self, path: str):
         Path(path).write_text(
             "ALPACA_OPTIONS_PAPER_API_KEY='old-key'\n"
