@@ -12,8 +12,10 @@ from strategies.cash_secured_put import CashSecuredPutStrategy
 class CashSecuredPutStrategyTests(unittest.TestCase):
     def test_generates_order_for_allowed_underlying(self):
         config = load_config()
+        config["market_data"]["use_sample_data"] = True
+        config["strategies"]["cash_secured_put"]["enabled"] = True
         client = AlpacaOptionsClient(config, use_sample_data=True)
-        underlying = load_underlyings(config)[0]
+        underlying = {**load_underlyings(config)[0], "strategies_allowed": ["cash_secured_put"]}
         snapshot = client.get_underlying_snapshot(underlying["symbol"], as_of=date(2026, 4, 23))
         context = StrategyContext(
             underlying=underlying,

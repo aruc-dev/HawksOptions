@@ -46,6 +46,18 @@ class _StockDataClient:
         }
 
 
+class _SpyStockDataClient:
+    def __init__(self, key: str, secret: str):
+        self.key = key
+        self.secret = secret
+
+    def get_stock_latest_quote(self, request):
+        return {
+            symbol: _Quote(499.8, 500.2)
+            for symbol in request.symbol_or_symbols
+        }
+
+
 class _FailingStockDataClient:
     def __init__(self, key: str, secret: str):
         self.key = key
@@ -53,6 +65,49 @@ class _FailingStockDataClient:
 
     def get_stock_latest_quote(self, request):
         raise TimeoutError("provider timeout")
+
+
+class _OptionChainDataClient:
+    def __init__(self, key: str, secret: str):
+        self.key = key
+        self.secret = secret
+
+    def get_option_chain(self, request):
+        return {
+            "SPY260619P00500000": {
+                "latest_quote": _Quote(1.2, 1.4),
+                "latest_trade": {"price": 1.3, "size": 25},
+                "implied_volatility": 0.22,
+                "greeks": {
+                    "delta": -0.21,
+                    "theta": -0.03,
+                    "vega": 0.12,
+                    "gamma": 0.01,
+                },
+            }
+        }
+
+    def get_option_bars(self, request):
+        return {"SPY260619P00500000": [{"volume": 123}]}
+
+
+class _TradingClient:
+    def __init__(self, key: str, secret: str, paper: bool):
+        self.key = key
+        self.secret = secret
+        self.paper = paper
+
+    def get_option_contracts(self, request):
+        return {
+            "option_contracts": [
+                {
+                    "symbol": "SPY260619P00500000",
+                    "open_interest": "850",
+                    "open_interest_date": date(2026, 4, 22),
+                }
+            ],
+            "next_page_token": None,
+        }
 
 
 class AlpacaOptionsClientTests(unittest.TestCase):
@@ -131,6 +186,29 @@ class AlpacaOptionsClientTests(unittest.TestCase):
         self.assertEqual(snapshot["vix"], None)
         self.assertEqual(snapshot["source"], "alpaca_stock_latest_quote_error")
         self.assertEqual(snapshot["symbol"], "VIX")
+
+    def test_live_option_chain_uses_alpaca_chain_quotes_and_contract_metadata(self):
+        config = load_config()
+        config["market_data"]["use_sample_data"] = False
+        with (
+            patch.dict("os.environ", {"ALPACA_OPTIONS_PAPER_API_KEY": "key", "ALPACA_OPTIONS_PAPER_SECRET_KEY": "secret"}),
+            patch.object(client_module, "TradingClient", _TradingClient),
+            patch.object(client_module, "OptionHistoricalDataClient", _OptionChainDataClient),
+            patch.object(client_module, "StockHistoricalDataClient", _SpyStockDataClient),
+        ):
+            client = AlpacaOptionsClient(config, use_sample_data=False)
+            chain = client.get_option_chain("SPY", as_of=date(2026, 4, 23))
+
+        self.assertEqual(len(chain), 1)
+        contract = chain[0]
+        self.assertEqual(contract.contract_symbol, "SPY260619P00500000")
+        self.assertEqual(contract.option_type, "put")
+        self.assertEqual(contract.open_interest, 850)
+        self.assertEqual(contract.volume, 123)
+        self.assertEqual(contract.delta, -0.21)
+        self.assertEqual(contract.underlying_price, 500.0)
+        self.assertEqual(contract.meta["source"], "alpaca_option_chain")
+        self.assertEqual(contract.meta["volume_source"], "daily_bar")
 
     def test_occ_symbols_round_trip(self):
         client = AlpacaOptionsClient(load_config(), use_sample_data=True)

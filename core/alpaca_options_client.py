@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import os
+from collections.abc import Iterator
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -19,8 +21,15 @@ from core.occ import format_occ_symbol, parse_occ_symbol
 TradingClient = None
 OptionHistoricalDataClient = None
 OptionLatestQuoteRequest = None
+OptionChainRequest = None
+OptionBarsRequest = None
+TimeFrame = None
 StockHistoricalDataClient = None
 StockLatestQuoteRequest = None
+GetOptionContractsRequest = None
+AssetStatus = None
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _resolve_trading_client_class():
@@ -36,17 +45,54 @@ def _resolve_trading_client_class():
 
 
 def _resolve_option_data_classes():
-    global OptionHistoricalDataClient, OptionLatestQuoteRequest
-    if OptionHistoricalDataClient is not None and OptionLatestQuoteRequest is not None:
-        return OptionHistoricalDataClient, OptionLatestQuoteRequest
+    global OptionHistoricalDataClient, OptionLatestQuoteRequest, OptionChainRequest
+    if (
+        OptionHistoricalDataClient is not None
+        and OptionLatestQuoteRequest is not None
+        and OptionChainRequest is not None
+    ):
+        return OptionHistoricalDataClient, OptionLatestQuoteRequest, OptionChainRequest
     try:
         from alpaca.data.historical.option import OptionHistoricalDataClient as AlpacaOptionHistoricalDataClient  # type: ignore
+        from alpaca.data.requests import OptionChainRequest as AlpacaOptionChainRequest  # type: ignore
         from alpaca.data.requests import OptionLatestQuoteRequest as AlpacaOptionLatestQuoteRequest  # type: ignore
     except ImportError:  # pragma: no cover - optional dependency
+        return None, None, None
+    if OptionHistoricalDataClient is None:
+        OptionHistoricalDataClient = AlpacaOptionHistoricalDataClient
+    if OptionLatestQuoteRequest is None:
+        OptionLatestQuoteRequest = AlpacaOptionLatestQuoteRequest
+    if OptionChainRequest is None:
+        OptionChainRequest = AlpacaOptionChainRequest
+    return OptionHistoricalDataClient, OptionLatestQuoteRequest, OptionChainRequest
+
+
+def _resolve_option_contract_classes():
+    global GetOptionContractsRequest, AssetStatus
+    if GetOptionContractsRequest is not None and AssetStatus is not None:
+        return GetOptionContractsRequest, AssetStatus
+    try:
+        from alpaca.trading.enums import AssetStatus as AlpacaAssetStatus  # type: ignore
+        from alpaca.trading.requests import GetOptionContractsRequest as AlpacaGetOptionContractsRequest  # type: ignore
+    except ImportError:  # pragma: no cover - optional dependency
         return None, None
-    OptionHistoricalDataClient = AlpacaOptionHistoricalDataClient
-    OptionLatestQuoteRequest = AlpacaOptionLatestQuoteRequest
-    return OptionHistoricalDataClient, OptionLatestQuoteRequest
+    GetOptionContractsRequest = AlpacaGetOptionContractsRequest
+    AssetStatus = AlpacaAssetStatus
+    return GetOptionContractsRequest, AssetStatus
+
+
+def _resolve_option_bar_classes():
+    global OptionBarsRequest, TimeFrame
+    if OptionBarsRequest is not None and TimeFrame is not None:
+        return OptionBarsRequest, TimeFrame
+    try:
+        from alpaca.data.requests import OptionBarsRequest as AlpacaOptionBarsRequest  # type: ignore
+        from alpaca.data.timeframe import TimeFrame as AlpacaTimeFrame  # type: ignore
+    except ImportError:  # pragma: no cover - optional dependency
+        return None, None
+    OptionBarsRequest = AlpacaOptionBarsRequest
+    TimeFrame = AlpacaTimeFrame
+    return OptionBarsRequest, TimeFrame
 
 
 def _resolve_stock_data_classes():
@@ -58,8 +104,10 @@ def _resolve_stock_data_classes():
         from alpaca.data.requests import StockLatestQuoteRequest as AlpacaStockLatestQuoteRequest  # type: ignore
     except ImportError:  # pragma: no cover - optional dependency
         return None, None
-    StockHistoricalDataClient = AlpacaStockHistoricalDataClient
-    StockLatestQuoteRequest = AlpacaStockLatestQuoteRequest
+    if StockHistoricalDataClient is None:
+        StockHistoricalDataClient = AlpacaStockHistoricalDataClient
+    if StockLatestQuoteRequest is None:
+        StockLatestQuoteRequest = AlpacaStockLatestQuoteRequest
     return StockHistoricalDataClient, StockLatestQuoteRequest
 
 
@@ -130,6 +178,8 @@ class AlpacaOptionsClient:
         self._option_data_client = None
         self._stock_data_client = None
         self._underlyings = {item["symbol"]: item for item in load_underlyings(self.config)}
+        self._live_contract_meta_cache: dict[tuple[str, str, int, int, float, float], dict[str, Any]] = {}
+        self._live_underlying_cache: dict[tuple[str, str], dict[str, Any]] = {}
 
     def _mode(self) -> str:
         return str(self.config.get("mode", "paper")).lower()
@@ -146,7 +196,7 @@ class AlpacaOptionsClient:
         return self._trading_client
 
     def _get_option_data_client(self) -> Any:
-        data_client_class, _ = _resolve_option_data_classes()
+        data_client_class, _, _ = _resolve_option_data_classes()
         if self.use_sample_data or data_client_class is None:
             return None
         if self._option_data_client is None:
@@ -208,6 +258,8 @@ class AlpacaOptionsClient:
         return []
 
     def get_underlying_snapshot(self, symbol: str, as_of: date | None = None) -> dict[str, Any]:
+        if not self.use_sample_data:
+            return self._get_live_underlying_snapshot(symbol, as_of=as_of)
         as_of = as_of or date.today()
         meta = deepcopy(self._underlyings.get(symbol, {"symbol": symbol}))
         current_iv = _sample_iv(symbol, as_of)
@@ -228,6 +280,8 @@ class AlpacaOptionsClient:
         return meta
 
     def get_option_chain(self, symbol: str, as_of: date | None = None) -> list[OptionContract]:
+        if not self.use_sample_data:
+            return self._get_live_option_chain(symbol, as_of=as_of)
         as_of = as_of or date.today()
         spot = _sample_price(symbol, as_of)
         iv = _sample_iv(symbol, as_of)
@@ -323,7 +377,7 @@ class AlpacaOptionsClient:
 
     def _get_live_option_quotes(self, symbols: list[str]) -> dict[str, dict[str, Any]]:
         client = self._get_option_data_client()
-        _, request_class = _resolve_option_data_classes()
+        _, request_class, _ = _resolve_option_data_classes()
         if client is None or request_class is None or not symbols:
             return {}
         request = request_class(symbol_or_symbols=symbols)
@@ -346,6 +400,231 @@ class AlpacaOptionsClient:
             if timestamp is not None:
                 item["timestamp"] = timestamp.isoformat(timespec="seconds")
             out[str(symbol)] = item
+        return out
+
+    def _get_live_underlying_snapshot(self, symbol: str, as_of: date | None = None) -> dict[str, Any]:
+        as_of = as_of or date.today()
+        cache_key = (symbol.upper(), as_of.isoformat())
+        cached = self._live_underlying_cache.get(cache_key)
+        if cached is not None:
+            return deepcopy(cached)
+        client = self._get_stock_data_client()
+        _, request_class = _resolve_stock_data_classes()
+        if client is None or request_class is None:
+            raise RuntimeError("live Alpaca stock data client is unavailable")
+        request = request_class(symbol_or_symbols=[symbol])
+        raw_quotes = client.get_stock_latest_quote(request)
+        quotes = raw_quotes if isinstance(raw_quotes, dict) else getattr(raw_quotes, "data", {})
+        quote = quotes.get(symbol) if isinstance(quotes, dict) else None
+        bid = _quote_value(quote, "bid_price", "bp", "bid")
+        ask = _quote_value(quote, "ask_price", "ap", "ask")
+        if bid is None or ask is None or bid <= 0 or ask <= 0 or ask < bid:
+            raise RuntimeError(f"live Alpaca stock quote is unavailable for {symbol}")
+        price = round((bid + ask) / 2.0, 4)
+        meta = deepcopy(self._underlyings.get(symbol, {"symbol": symbol}))
+        current_iv = _optional_float(meta.get("current_iv")) or 0.0
+        iv_rank = _optional_float(meta.get("iv_rank"))
+        iv_percentile = _optional_float(meta.get("iv_percentile"))
+        snapshot = {
+            **meta,
+            "symbol": symbol,
+            "price": price,
+            "current_iv": current_iv,
+            "iv_rank": iv_rank if iv_rank is not None else 0.0,
+            "iv_percentile": iv_percentile if iv_percentile is not None else (iv_rank if iv_rank is not None else 0.0),
+            "realized_vol_20d": float(meta.get("realized_vol_20d", 0.0)),
+            "atr_pct": float(meta.get("atr_pct", 0.0)),
+            "source": "alpaca_stock_latest_quote",
+        }
+        self._live_underlying_cache[cache_key] = snapshot
+        return deepcopy(snapshot)
+
+    def _get_live_option_chain(self, symbol: str, as_of: date | None = None) -> list[OptionContract]:
+        as_of = as_of or date.today()
+        client = self._get_option_data_client()
+        _, _, request_class = _resolve_option_data_classes()
+        if client is None or request_class is None:
+            raise RuntimeError("live Alpaca option data client is unavailable")
+        underlying_snapshot = self.get_underlying_snapshot(symbol, as_of=as_of)
+        spot = float(underlying_snapshot["price"])
+        min_dte, max_dte = self._live_chain_dte_range()
+        strike_gte, strike_lte = self._live_chain_strike_bounds(spot)
+        request = request_class(
+            underlying_symbol=symbol,
+            expiration_date_gte=as_of + timedelta(days=min_dte),
+            expiration_date_lte=as_of + timedelta(days=max_dte),
+            strike_price_gte=strike_gte,
+            strike_price_lte=strike_lte,
+        )
+        raw_chain = client.get_option_chain(request)
+        snapshots = raw_chain if isinstance(raw_chain, dict) else getattr(raw_chain, "data", {})
+        if not isinstance(snapshots, dict):
+            return []
+        meta_by_symbol = self._get_live_option_contract_metadata(
+            symbol=symbol,
+            as_of=as_of,
+            min_dte=min_dte,
+            max_dte=max_dte,
+            strike_gte=strike_gte,
+            strike_lte=strike_lte,
+        )
+        daily_volume_by_symbol = self._get_live_option_daily_volumes(
+            symbols=[str(contract_symbol) for contract_symbol in snapshots],
+            as_of=as_of,
+        )
+        contracts: list[OptionContract] = []
+        for contract_symbol, snapshot in snapshots.items():
+            contract_symbol = str(contract_symbol)
+            try:
+                parsed = parse_occ_symbol(contract_symbol)
+            except ValueError:
+                continue
+            if str(parsed["underlying"]).upper() != symbol.upper():
+                continue
+            quote = _object_value(snapshot, "latest_quote")
+            trade = _object_value(snapshot, "latest_trade")
+            greeks = _object_value(snapshot, "greeks")
+            bid = _quote_value(quote, "bid_price", "bp", "bid") or 0.0
+            ask = _quote_value(quote, "ask_price", "ap", "ask") or 0.0
+            last = _quote_value(trade, "price", "p", "last") or ((bid + ask) / 2.0 if bid > 0 and ask > 0 else 0.0)
+            contract_meta = meta_by_symbol.get(contract_symbol, {})
+            timestamp = _quote_datetime(quote, "timestamp", "t")
+            daily_volume = daily_volume_by_symbol.get(contract_symbol)
+            if daily_volume is not None:
+                volume, volume_source = daily_volume, "daily_bar"
+            else:
+                volume, volume_source = _live_option_volume(trade)
+            contract = OptionContract(
+                contract_symbol=contract_symbol,
+                underlying=str(parsed["underlying"]),
+                option_type=str(parsed["option_type"]),
+                strike=float(parsed["strike"]),
+                expiration=parsed["expiration"],  # type: ignore[arg-type]
+                bid=round(float(bid), 4),
+                ask=round(float(ask), 4),
+                last=round(float(last), 4),
+                open_interest=_parse_int(_object_value(contract_meta, "open_interest"), default=0),
+                volume=volume,
+                implied_volatility=float(_object_value(snapshot, "implied_volatility") or 0.0),
+                delta=_optional_float(_object_value(greeks, "delta")),
+                theta=_optional_float(_object_value(greeks, "theta")),
+                vega=_optional_float(_object_value(greeks, "vega")),
+                gamma=_optional_float(_object_value(greeks, "gamma")),
+                underlying_price=spot,
+                meta={
+                    "source": "alpaca_option_chain",
+                    "quote_timestamp": timestamp.isoformat(timespec="seconds") if timestamp else None,
+                    "volume_source": volume_source,
+                    "open_interest_date": _date_text(_object_value(contract_meta, "open_interest_date")),
+                },
+            )
+            contracts.append(contract)
+        return sorted(contracts, key=lambda item: (item.expiration, item.strike, item.option_type))
+
+    def _live_chain_dte_range(self) -> tuple[int, int]:
+        gates = self.config.get("gates", {})
+        min_dte = int(gates.get("min_dte_entry", 7))
+        max_dte = int(gates.get("max_dte_entry", 55))
+        return max(0, min_dte), max(min_dte, max_dte)
+
+    def _live_chain_strike_bounds(self, spot: float) -> tuple[float, float]:
+        market_data = self.config.get("market_data", {})
+        window_pct = float(market_data.get("option_chain_strike_window_pct", 0.12))
+        window_pct = max(0.01, min(window_pct, 1.0))
+        return round(max(0.01, spot * (1.0 - window_pct)), 2), round(spot * (1.0 + window_pct), 2)
+
+    def _get_live_option_contract_metadata(
+        self,
+        *,
+        symbol: str,
+        as_of: date,
+        min_dte: int,
+        max_dte: int,
+        strike_gte: float,
+        strike_lte: float,
+    ) -> dict[str, Any]:
+        cache_key = (symbol.upper(), as_of.isoformat(), min_dte, max_dte, strike_gte, strike_lte)
+        cached = self._live_contract_meta_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        request_class, asset_status_class = _resolve_option_contract_classes()
+        if request_class is None or asset_status_class is None:
+            return {}
+        try:
+            client = self._get_trading_client()
+        except Exception as exc:
+            _LOGGER.warning("option contract metadata unavailable for %s: %s", symbol, exc)
+            self._live_contract_meta_cache[cache_key] = {}
+            return {}
+        if client is None:
+            return {}
+        out: dict[str, Any] = {}
+        page_token = None
+        while True:
+            request = request_class(
+                underlying_symbols=[symbol],
+                status=asset_status_class.ACTIVE,
+                expiration_date_gte=as_of + timedelta(days=min_dte),
+                expiration_date_lte=as_of + timedelta(days=max_dte),
+                strike_price_gte=str(strike_gte),
+                strike_price_lte=str(strike_lte),
+                limit=10000,
+                page_token=page_token,
+            )
+            try:
+                response = client.get_option_contracts(request)
+            except Exception as exc:
+                _LOGGER.warning("option contract metadata lookup failed for %s: %s", symbol, exc)
+                break
+            contracts = _object_value(response, "option_contracts") or []
+            for contract in contracts:
+                contract_symbol = str(_object_value(contract, "symbol") or "")
+                if contract_symbol:
+                    out[contract_symbol] = contract
+            page_token = _object_value(response, "next_page_token")
+            if not page_token:
+                break
+        self._live_contract_meta_cache[cache_key] = out
+        return out
+
+    def _get_live_option_daily_volumes(self, *, symbols: list[str], as_of: date) -> dict[str, int]:
+        request_class, timeframe_class = _resolve_option_bar_classes()
+        if request_class is None or timeframe_class is None:
+            return {}
+        client = self._get_option_data_client()
+        if client is None:
+            return {}
+        unique_symbols = sorted({symbol for symbol in symbols if symbol})
+        if not unique_symbols:
+            return {}
+        market_data = self.config.get("market_data", {})
+        batch_size = max(1, int(market_data.get("option_bar_batch_size", 200)))
+        start = datetime.combine(as_of, datetime.min.time(), tzinfo=timezone.utc)
+        end = datetime.now(timezone.utc) if as_of == date.today() else start + timedelta(days=1)
+        out: dict[str, int] = {}
+        for batch in _chunks(unique_symbols, batch_size):
+            request = request_class(
+                symbol_or_symbols=batch,
+                timeframe=timeframe_class.Day,
+                start=start,
+                end=end,
+                limit=1,
+            )
+            try:
+                response = client.get_option_bars(request)
+            except Exception as exc:
+                _LOGGER.warning("option daily volume lookup failed: %s", exc)
+                continue
+            bars_by_symbol = response if isinstance(response, dict) else getattr(response, "data", {})
+            if not isinstance(bars_by_symbol, dict):
+                continue
+            for symbol, bars in bars_by_symbol.items():
+                if not bars:
+                    continue
+                latest_bar = bars[-1]
+                volume = _parse_int(_object_value(latest_bar, "volume"), default=0)
+                if volume > 0:
+                    out[str(symbol)] = volume
         return out
 
     def _get_live_market_volatility_snapshot(self, as_of: date | None = None) -> dict[str, Any]:
@@ -414,6 +693,54 @@ class AlpacaOptionsClient:
                 "payload": payload,
             }
         raise NotImplementedError("live order submission is intentionally not enabled in tests")
+
+
+def _object_value(obj: Any, *names: str) -> Any:
+    if obj is None:
+        return None
+    for name in names:
+        value = obj.get(name) if isinstance(obj, dict) else getattr(obj, name, None)
+        if value is not None:
+            return value
+    return None
+
+
+def _optional_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_int(value: Any, *, default: int = 0) -> int:
+    if value in (None, ""):
+        return default
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _live_option_volume(trade: Any) -> tuple[int, str]:
+    size = _quote_value(trade, "size", "s")
+    if size is None:
+        return 0, "unavailable"
+    return max(0, int(size)), "latest_trade_size"
+
+
+def _date_text(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    return str(value)
+
+
+def _chunks(items: list[str], size: int) -> Iterator[list[str]]:
+    for index in range(0, len(items), size):
+        yield items[index:index + size]
 
 
 def _quote_value(quote: Any, *names: str) -> float | None:
