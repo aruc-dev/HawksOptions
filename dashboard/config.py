@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from core.config import load_config, load_yaml, resolve_config_path
+from core.risk_throttle import configured_daily_loss_halt_pct
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -32,7 +33,7 @@ class DashboardConfig:
 
     @property
     def daily_loss_limit_pct(self) -> float:
-        return float(self._load().get("account", {}).get("daily_loss_halt_pct", 0.05))
+        return configured_daily_loss_halt_pct(self._load())
 
     @property
     def account_config(self) -> dict[str, Any]:

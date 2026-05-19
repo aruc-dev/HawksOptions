@@ -140,6 +140,8 @@ class TestLocalConfigOverlay(unittest.TestCase):
                 "mode: paper\n"
                 "account:\n"
                 "  daily_loss_halt_pct: 0.03\n"
+                "risk_throttle:\n"
+                "  daily_loss_halt_pct: 4\n"
                 "reporting:\n"
                 "  trade_log_file: data/trades.csv\n",
                 encoding="utf-8",
@@ -158,7 +160,7 @@ class TestLocalConfigOverlay(unittest.TestCase):
                 trade_log_path = config.trade_log_path
 
         self.assertEqual(mode, "live")
-        self.assertEqual(daily_loss_limit, 0.02)
+        self.assertEqual(daily_loss_limit, 0.04)
         self.assertEqual(trade_log_path.name, "trades.csv")
 
 

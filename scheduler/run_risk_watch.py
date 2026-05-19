@@ -51,10 +51,19 @@ def run_risk_watch(*, config: dict | None = None, dry_run: bool = True) -> dict[
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run elevated risk watch")
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--dry-run",
+        dest="dry_run",
         action="store_true",
+        default=True,
         help="Run checks without persisting elevated-position snapshots or metrics.",
+    )
+    mode.add_argument(
+        "--persist",
+        dest="dry_run",
+        action="store_false",
+        help="Persist elevated-position snapshots and metrics.",
     )
     args = parser.parse_args(argv)
     print(json.dumps(run_risk_watch(dry_run=args.dry_run), indent=2))

@@ -21,6 +21,7 @@ from core.risk_manager import (
     write_daily_baseline,
     write_greeks_snapshot,
 )
+from core.risk_throttle import configured_daily_loss_halt_pct
 from core.trade_log import mark_strategy_closed
 from scheduler.common import current_positions, load_runtime, refresh_positions
 
@@ -98,7 +99,7 @@ def _run_risk_check_with_runtime(
     payload["daily_loss"] = daily_loss_status(
         float(baseline["portfolio_value"]),
         float(account["portfolio_value"]),
-        halt_pct=float(config.get("account", {}).get("daily_loss_halt_pct", 0.05)),
+        halt_pct=configured_daily_loss_halt_pct(config),
         hard_close_pct=float(config.get("account", {}).get("tail_risk_close_pct", 0.08)),
     )
     if dry_run:

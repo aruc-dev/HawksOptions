@@ -203,6 +203,14 @@ class ProductionReadinessWorkflowTests(unittest.TestCase):
             self.assertEqual(persisted["elevated_positions"], ["strategy-1"])
             self.assertTrue(persisted["triggered_extra_risk_check"])
 
+    def test_risk_watch_cli_defaults_to_dry_run_and_requires_persist_flag(self):
+        with patch.object(run_risk_watch, "run_risk_watch", return_value={}) as runner:
+            run_risk_watch.main([])
+            run_risk_watch.main(["--persist"])
+
+        self.assertTrue(runner.call_args_list[0].kwargs["dry_run"])
+        self.assertFalse(runner.call_args_list[1].kwargs["dry_run"])
+
     def test_runtime_guard_blocks_halt_file_and_live_without_daily_ack(self):
         with tempfile.TemporaryDirectory() as tmp:
             halt_file = Path(tmp) / "HALTED"

@@ -64,6 +64,11 @@ class _Client:
         return {"portfolio_value": 10000.0}
 
 
+class _LossClient(_Client):
+    def get_account(self):
+        return {"portfolio_value": 9600.0}
+
+
 class RunRiskCheckTests(unittest.TestCase):
     def _run_with_reconciled_pending_close(self, *, dry_run: bool):
         config = {
@@ -133,6 +138,31 @@ class RunRiskCheckTests(unittest.TestCase):
         self.assertEqual(result["daily_loss"]["status"], "ok")
         self.assertEqual(result["snapshot_path"], "")
         write_daily_baseline.assert_not_called()
+        write_greeks_snapshot.assert_not_called()
+
+    def test_daily_loss_status_uses_risk_throttle_limit(self):
+        config = {
+            "risk_actions": {"execute_closes": False},
+            "account": {"daily_loss_halt_pct": 0.05},
+            "risk_throttle": {"daily_loss_halt_pct": 4},
+        }
+        paths = {
+            "positions": Path("positions.json"),
+            "trade_log": Path("trades.csv"),
+            "baseline": Path("baseline.json"),
+            "greeks_dir": Path("greeks"),
+        }
+        with (
+            patch("scheduler.run_risk_check.load_runtime", return_value=(config, _LossClient(), paths)),
+            patch("scheduler.run_risk_check.current_positions", return_value=[]),
+            patch("scheduler.run_risk_check.refresh_positions", return_value=[]),
+            patch("scheduler.run_risk_check.continuous_risk_checks", return_value={"actions": []}),
+            patch("scheduler.run_risk_check.read_daily_baseline", return_value={"date": "2026-04-23", "portfolio_value": 10000.0}),
+            patch("scheduler.run_risk_check.write_greeks_snapshot") as write_greeks_snapshot,
+        ):
+            result = run_risk_check(as_of=date(2026, 4, 23), dry_run=True)
+
+        self.assertEqual(result["daily_loss"]["status"], "halt_new_entries")
         write_greeks_snapshot.assert_not_called()
 
 

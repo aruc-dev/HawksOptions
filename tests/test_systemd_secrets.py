@@ -20,6 +20,10 @@ class SystemdSecretsTests(unittest.TestCase):
             self.assertIn("Wants=network-online.target hawksoptions-secrets.service", text, unit.name)
             self.assertIn("After=network-online.target hawksoptions-secrets.service", text, unit.name)
 
+    def test_risk_watch_timer_persists_explicitly(self):
+        text = (SYSTEMD_DIR / "hawksoptions-risk-watch.service").read_text(encoding="utf-8")
+        self.assertIn("scheduler/run_risk_watch.py --persist", text)
+
     def test_secrets_service_accepts_forced_refresh_and_fixes_legacy_file_owner(self):
         text = (SYSTEMD_DIR / "hawksoptions-secrets.service").read_text(encoding="utf-8")
         self.assertIn("PassEnvironment=HAWKSOPTIONS_SECRETS_FORCE_REFRESH", text)

@@ -7,6 +7,20 @@ from typing import Any
 from core.models import StrategyOrder
 
 
+def configured_daily_loss_halt_pct(config: dict[str, Any], *, default: float = 0.05) -> float:
+    throttle_cfg = config.get("risk_throttle") or {}
+    if isinstance(throttle_cfg, dict):
+        value = _optional_pct(throttle_cfg.get("daily_loss_halt_pct"))
+        if value is not None:
+            return value
+    account_cfg = config.get("account") or {}
+    if isinstance(account_cfg, dict):
+        value = _optional_pct(account_cfg.get("daily_loss_halt_pct"))
+        if value is not None:
+            return value
+    return default
+
+
 def risk_throttle_reasons(
     order: StrategyOrder,
     *,
