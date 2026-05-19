@@ -67,6 +67,11 @@ def _context(config: dict, underlying: dict | None = None, *, current_iv: float 
     )
 
 
+def _enable_cash_secured_put(config: dict) -> dict:
+    config["strategies"]["cash_secured_put"]["enabled"] = True
+    return config
+
+
 class _InventoryClient(AlpacaOptionsClient):
     def get_positions(self):
         return [{"symbol": "SPY", "qty": 200, "avg_entry_price": 101.25}]
@@ -371,7 +376,7 @@ class StrategyTodoTests(unittest.TestCase):
         self.assertEqual(order_with.metadata["selection"]["dealer_positioning"]["regime"], "negative_gamma")
 
     def test_technical_regime_filter_blocks_configured_trend_gate(self):
-        config = deepcopy(load_config())
+        config = _enable_cash_secured_put(deepcopy(load_config()))
         config["strategies"]["cash_secured_put"]["min_trend_20d"] = 0.0
         underlying = {"symbol": "SPY", "strategies_allowed": ["cash_secured_put"], "trend_20d": -0.05}
 
@@ -381,7 +386,7 @@ class StrategyTodoTests(unittest.TestCase):
         )
 
     def test_technical_regime_filter_blocks_missing_configured_metric(self):
-        config = deepcopy(load_config())
+        config = _enable_cash_secured_put(deepcopy(load_config()))
         config["strategies"]["cash_secured_put"]["max_rsi_14"] = 70.0
 
         self.assertIsNone(CashSecuredPutStrategy(config).generate_order(_context(config)))
@@ -392,7 +397,7 @@ class StrategyTodoTests(unittest.TestCase):
         )
 
     def test_event_risk_filter_blocks_when_configured(self):
-        config = deepcopy(load_config())
+        config = _enable_cash_secured_put(deepcopy(load_config()))
         config["strategies"]["cash_secured_put"]["block_event_risk"] = True
         underlying = {
             "symbol": "SPY",
@@ -410,7 +415,7 @@ class StrategyTodoTests(unittest.TestCase):
         )
 
     def test_event_risk_level_filter_blocks_when_configured(self):
-        config = deepcopy(load_config())
+        config = _enable_cash_secured_put(deepcopy(load_config()))
         config["strategies"]["cash_secured_put"]["max_event_risk_level"] = 0.5
         underlying = {
             "symbol": "SPY",
@@ -443,7 +448,7 @@ class StrategyTodoTests(unittest.TestCase):
         self.assertTrue(order_with.metadata["selection"]["event_risk"]["event_risk"])
 
     def test_configured_contract_limits_cap_generated_quantity(self):
-        config = deepcopy(load_config())
+        config = _enable_cash_secured_put(deepcopy(load_config()))
         config["strategies"]["cash_secured_put"]["contracts"] = 4
         config["strategies"]["cash_secured_put"]["max_contracts_per_underlying"] = 3
         underlying = {"symbol": "SPY", "max_contracts": 2, "strategies_allowed": ["cash_secured_put"]}
@@ -454,7 +459,7 @@ class StrategyTodoTests(unittest.TestCase):
         self.assertEqual(order.legs[0].qty, 2)
 
     def test_negative_contract_limits_do_not_crash_quantity(self):
-        config = deepcopy(load_config())
+        config = _enable_cash_secured_put(deepcopy(load_config()))
         config["strategies"]["cash_secured_put"]["contracts"] = -1
         config["strategies"]["cash_secured_put"]["max_contracts_per_underlying"] = -1
         underlying = {"symbol": "SPY", "strategies_allowed": ["cash_secured_put"]}

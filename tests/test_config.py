@@ -162,5 +162,30 @@ class TestLocalConfigOverlay(unittest.TestCase):
         self.assertEqual(trade_log_path.name, "trades.csv")
 
 
+class TestCommittedPaperDefaults(unittest.TestCase):
+    def test_paper_defaults_use_live_defined_risk_scan_profile(self):
+        config = cfg_mod.load_yaml(cfg_mod.CONFIG_PATH)
+
+        self.assertFalse(config["market_data"]["use_sample_data"])
+        self.assertFalse(config["strategies"]["cash_secured_put"]["enabled"])
+        self.assertFalse(config["strategies"]["covered_call"]["enabled"])
+        self.assertTrue(config["strategies"]["vertical_spread"]["enabled"])
+        self.assertTrue(config["strategies"]["iron_condor"]["enabled"])
+        self.assertEqual(config["account"]["max_single_position_risk_pct"], 0.05)
+        self.assertEqual(config["account"]["max_portfolio_risk_pct"], 0.20)
+
+    def test_default_underlyings_do_not_enable_cash_secured_entries(self):
+        payload = cfg_mod.load_yaml(cfg_mod.BASE_DIR / "config" / "underlyings.yaml")
+        defined_risk_entries = {"vertical_spread", "iron_condor"}
+
+        self.assertGreater(len(payload["underlyings"]), 0)
+        for underlying in payload["underlyings"]:
+            allowed = set(underlying["strategies_allowed"])
+            self.assertTrue(allowed)
+            self.assertNotIn("cash_secured_put", allowed)
+            self.assertNotIn("covered_call", allowed)
+            self.assertTrue(allowed.issubset(defined_risk_entries))
+
+
 if __name__ == "__main__":
     unittest.main()

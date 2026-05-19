@@ -12,8 +12,8 @@ without sharing runtime state or mutating the reference repo.
 - Enforces portfolio max-loss limits before every order
 - Tracks IV rank, Greeks, earnings blackout windows, and ex-dividend risk
 - Ships with a read-only FastAPI dashboard and Linux/systemd deployment assets
-- Includes a deterministic sample-data mode so scans, tests, and the bundled
-  backtest run without live credentials
+- Paper scans use live Alpaca market data by default, with a deterministic
+  sample-data mode available for local tests and the bundled backtest
 
 ## Repository Layout
 
@@ -45,8 +45,13 @@ python3 scheduler/run_backtest.py --days 30 --fund 10000
 python3 scheduler/run_scan.py --dry-run
 ```
 
-The default config uses sample market data so the system stays runnable before
-real Alpaca keys are added.
+The committed paper config uses live Alpaca market data. For local deterministic
+dry-runs without credentials, create `config/config.local.yaml` with:
+
+```yaml
+market_data:
+  use_sample_data: true
+```
 
 ## Local Configuration
 
@@ -83,10 +88,17 @@ See [docs/beads.md](docs/beads.md) for setup and workflow details.
 
 - `mode: paper`
 - defined-risk strategies only
+- live Alpaca market data for paper scans
 - no 0-DTE or 1-DTE entries
 - max single-position risk capped at 5% of equity
 - max portfolio defined-risk capped at 20% of equity
 - earnings blackout and ex-dividend protection enabled
+
+Cash-secured puts and covered calls are disabled in the committed paper profile.
+One-lot cash-secured puts on default symbols can exceed the 5% single-position
+risk cap on a $100k paper account, and covered calls require existing long stock
+inventory. Re-enable either only through a local config overlay after reviewing
+the risk impact.
 
 ## Backtest Disclaimer
 

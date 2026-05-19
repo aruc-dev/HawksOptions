@@ -5,10 +5,17 @@ import unittest
 from datetime import date, datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from core.config import load_config
 from core.models import OptionContract, StrategyContext
 from scheduler.run_scan import _market_context_for_scan, _symbol_scan_health, scan_market
+
+
+def _sample_scan_config() -> dict:
+    config = load_config()
+    config["market_data"]["use_sample_data"] = True
+    return config
 
 
 class _VolatilityClient:
@@ -18,6 +25,20 @@ class _VolatilityClient:
     def get_market_volatility_snapshot(self, *, as_of):
         self.calls += 1
         raise RuntimeError("provider offline")
+
+
+class _ContextFailureClient:
+    def get_account(self):
+        return {
+            "equity": 100000.0,
+            "portfolio_value": 100000.0,
+            "cash": 50000.0,
+            "buying_power": 100000.0,
+            "options_level": 3,
+        }
+
+    def get_underlying_snapshot(self, symbol, as_of=None):
+        raise TimeoutError("stock quote timeout")
 
 
 class RunScanTests(unittest.TestCase):
@@ -44,7 +65,7 @@ class RunScanTests(unittest.TestCase):
         self.assertEqual(client.calls, 1)
 
     def test_dry_run_finds_candidates(self):
-        config = load_config()
+        config = _sample_scan_config()
         config["strategies"]["iron_condor"]["min_credit_to_roundtrip_cost"] = 0
         result = scan_market(config=config, as_of=date(2026, 4, 23), dry_run=True)
         self.assertGreaterEqual(result["accepted_count"], 1)
@@ -52,9 +73,10 @@ class RunScanTests(unittest.TestCase):
         self.assertIn("research_traces", result)
 
     def test_dry_run_ranks_all_risk_approved_candidates(self):
-        config = load_config()
+        config = _sample_scan_config()
         config["account"]["max_single_position_risk_pct"] = 1.0
         config["account"]["max_portfolio_risk_pct"] = 1.0
+        config["account"]["max_open_strategies"] = 1
         result = scan_market(config=config, as_of=date(2026, 4, 23), dry_run=True)
 
         self.assertEqual(result["candidate_count"], len(result["ranked_candidates"]))
@@ -67,7 +89,7 @@ class RunScanTests(unittest.TestCase):
         self.assertEqual(result["accepted"][0]["pre_ai_feature_packet"]["schema_version"], 1)
 
     def test_scan_persists_candidate_set_report(self):
-        config = load_config()
+        config = _sample_scan_config()
         config["account"]["max_single_position_risk_pct"] = 1.0
         config["account"]["max_portfolio_risk_pct"] = 1.0
         with TemporaryDirectory() as tmp:
@@ -120,7 +142,7 @@ class RunScanTests(unittest.TestCase):
         self.assertEqual(ai_disagreements["summary"]["total"], len(result["ai_disagreements"]))
 
     def test_scan_logs_deterministic_rejects_before_ai(self):
-        config = load_config()
+        config = _sample_scan_config()
         config["account"]["max_single_position_risk_pct"] = 0.000001
         config["account"]["max_portfolio_risk_pct"] = 0.000001
         with TemporaryDirectory() as tmp:
@@ -138,7 +160,7 @@ class RunScanTests(unittest.TestCase):
         self.assertEqual(payload["summary"]["by_type"]["deterministic_reject_before_ai"], len(result["ai_disagreements"]))
 
     def test_research_traces_are_read_only_observations(self):
-        config = load_config()
+        config = _sample_scan_config()
         config["account"]["max_single_position_risk_pct"] = 1.0
         config["account"]["max_portfolio_risk_pct"] = 1.0
         with TemporaryDirectory() as tmp:
@@ -153,7 +175,7 @@ class RunScanTests(unittest.TestCase):
         self.assertEqual(result["accepted_count"], len(result["accepted"]))
 
     def test_scan_health_summarizes_symbol_data_quality_and_funnel(self):
-        config = load_config()
+        config = _sample_scan_config()
         config["account"]["max_single_position_risk_pct"] = 1.0
         config["account"]["max_portfolio_risk_pct"] = 1.0
         with TemporaryDirectory() as tmp:
@@ -240,6 +262,32 @@ class RunScanTests(unittest.TestCase):
         self.assertEqual(health["stale_quote_fallback_count"], 1)
         self.assertEqual(health["invalid_quote_count"], 1)
         self.assertEqual(health["wide_quote_count"], 1)
+
+    def test_scan_records_context_failure_without_aborting_symbol_loop(self):
+        config = load_config()
+        config["gates"]["vix_iv_rank_scaling"]["enabled"] = False
+        with TemporaryDirectory() as tmp:
+            config["reporting"]["reports_dir"] = tmp
+            paths = {
+                "positions": Path(tmp) / "positions.json",
+                "trade_log": Path(tmp) / "trades.csv",
+                "reports_dir": Path(tmp),
+            }
+            with (
+                patch("scheduler.run_scan.load_runtime", return_value=(config, _ContextFailureClient(), paths)),
+                patch("scheduler.run_scan.configured_underlyings", return_value=[{"symbol": "BAD"}]),
+                patch("scheduler.run_scan.current_positions", return_value=[]),
+                patch("scheduler.run_scan.refresh_positions", return_value=[]),
+                patch("scheduler.run_scan.build_enabled_strategies", return_value=[]),
+            ):
+                result = scan_market(config=config, as_of=date(2026, 4, 23), dry_run=True)
+
+        self.assertEqual(result["candidate_count"], 0)
+        self.assertEqual(result["rejected"][0]["stage"], "context")
+        self.assertEqual(result["rejected"][0]["underlying"], "BAD")
+        self.assertIn("context_unavailable:TimeoutError", result["rejected"][0]["reasons"])
+        self.assertEqual(result["scan_health"]["chain_unavailable_symbols"], ["BAD"])
+        self.assertEqual(result["scan_health"]["by_symbol"][0]["context_error"], "stock quote timeout")
 
 
 if __name__ == "__main__":
