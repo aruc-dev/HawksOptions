@@ -111,6 +111,16 @@ class _NoDailyBarOptionChainDataClient(_OptionChainDataClient):
         return {}
 
 
+class _CountingOptionChainDataClient(_OptionChainDataClient):
+    def __init__(self, key: str, secret: str):
+        super().__init__(key, secret)
+        self.chain_calls = 0
+
+    def get_option_chain(self, request):
+        self.chain_calls += 1
+        return super().get_option_chain(request)
+
+
 class _TradingClient:
     def __init__(self, key: str, secret: str, paper: bool):
         self.key = key
@@ -260,6 +270,31 @@ class AlpacaOptionsClientTests(unittest.TestCase):
         self.assertEqual(snapshot["iv_percentile"], 50.0)
         self.assertEqual(snapshot["iv_source"], "alpaca_option_chain")
         self.assertEqual(snapshot["iv_rank_source"], "neutral_no_history")
+
+    def test_live_option_chain_reuses_chain_response_for_iv_snapshot(self):
+        config = load_config()
+        config["market_data"]["use_sample_data"] = False
+        with TemporaryDirectory() as tmp:
+            config["reporting"]["iv_history_file"] = str(Path(tmp) / "missing_iv_history.csv")
+            with (
+                patch.dict("os.environ", {"ALPACA_OPTIONS_PAPER_API_KEY": "key", "ALPACA_OPTIONS_PAPER_SECRET_KEY": "secret"}),
+                patch.object(client_module, "TradingClient", _TradingClient),
+                patch.object(client_module, "OptionHistoricalDataClient", _CountingOptionChainDataClient),
+                patch.object(client_module, "OptionLatestQuoteRequest", _LatestQuoteRequest),
+                patch.object(client_module, "OptionChainRequest", _KeywordRequest),
+                patch.object(client_module, "OptionBarsRequest", _KeywordRequest),
+                patch.object(client_module, "TimeFrame", _TimeFrame),
+                patch.object(client_module, "StockHistoricalDataClient", _SpyStockDataClient),
+                patch.object(client_module, "StockLatestQuoteRequest", _LatestQuoteRequest),
+                patch.object(client_module, "GetOptionContractsRequest", _KeywordRequest),
+                patch.object(client_module, "AssetStatus", _AssetStatus),
+            ):
+                client = AlpacaOptionsClient(config, use_sample_data=False)
+                chain = client.get_option_chain("SPY", as_of=date(2026, 4, 23))
+                option_data_client = client._option_data_client
+
+        self.assertEqual(len(chain), 1)
+        self.assertEqual(option_data_client.chain_calls, 1)
 
     def test_live_option_chain_does_not_treat_latest_trade_size_as_daily_volume(self):
         config = load_config()

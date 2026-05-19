@@ -180,6 +180,7 @@ class AlpacaOptionsClient:
         self._stock_data_client = None
         self._underlyings = {item["symbol"]: item for item in load_underlyings(self.config)}
         self._live_contract_meta_cache: dict[tuple[str, str, int, int, float, float], dict[str, Any]] = {}
+        self._live_option_chain_cache: dict[tuple[str, str, int, int, float, float], dict[str, Any]] = {}
         self._live_underlying_cache: dict[tuple[str, str], dict[str, Any]] = {}
 
     def _mode(self) -> str:
@@ -461,16 +462,15 @@ class AlpacaOptionsClient:
         spot = float(underlying_snapshot["price"])
         min_dte, max_dte = self._live_chain_dte_range()
         strike_gte, strike_lte = self._live_chain_strike_bounds(spot)
-        request = request_class(
-            underlying_symbol=symbol,
-            expiration_date_gte=as_of + timedelta(days=min_dte),
-            expiration_date_lte=as_of + timedelta(days=max_dte),
-            strike_price_gte=strike_gte,
-            strike_price_lte=strike_lte,
+        snapshots = self._get_live_option_chain_snapshots(
+            symbol=symbol,
+            as_of=as_of,
+            min_dte=min_dte,
+            max_dte=max_dte,
+            strike_gte=strike_gte,
+            strike_lte=strike_lte,
         )
-        raw_chain = client.get_option_chain(request)
-        snapshots = raw_chain if isinstance(raw_chain, dict) else getattr(raw_chain, "data", {})
-        if not isinstance(snapshots, dict):
+        if not snapshots:
             return []
         meta_by_symbol = self._get_live_option_contract_metadata(
             symbol=symbol,
@@ -545,13 +545,24 @@ class AlpacaOptionsClient:
         window_pct = max(0.01, min(window_pct, 1.0))
         return round(max(0.01, spot * (1.0 - window_pct)), 2), round(spot * (1.0 + window_pct), 2)
 
-    def _live_underlying_iv_snapshot(self, symbol: str, *, as_of: date, spot: float) -> dict[str, Any]:
+    def _get_live_option_chain_snapshots(
+        self,
+        *,
+        symbol: str,
+        as_of: date,
+        min_dte: int,
+        max_dte: int,
+        strike_gte: float,
+        strike_lte: float,
+    ) -> dict[str, Any]:
+        cache_key = (symbol.upper(), as_of.isoformat(), min_dte, max_dte, strike_gte, strike_lte)
+        cached = self._live_option_chain_cache.get(cache_key)
+        if cached is not None:
+            return cached
         client = self._get_option_data_client()
         _, _, request_class = _resolve_option_data_classes()
         if client is None or request_class is None:
-            return {"current_iv": 0.0, "iv_rank": 0.0, "iv_percentile": 0.0, "iv_source": "unavailable", "iv_rank_source": "unavailable"}
-        min_dte, max_dte = self._live_chain_dte_range()
-        strike_gte, strike_lte = self._live_chain_strike_bounds(spot)
+            raise RuntimeError("live Alpaca option data client is unavailable")
         request = request_class(
             underlying_symbol=symbol,
             expiration_date_gte=as_of + timedelta(days=min_dte),
@@ -559,13 +570,33 @@ class AlpacaOptionsClient:
             strike_price_gte=strike_gte,
             strike_price_lte=strike_lte,
         )
+        raw_chain = client.get_option_chain(request)
+        snapshots = raw_chain if isinstance(raw_chain, dict) else getattr(raw_chain, "data", {})
+        if not isinstance(snapshots, dict):
+            snapshots = {}
+        self._live_option_chain_cache[cache_key] = snapshots
+        return snapshots
+
+    def _live_underlying_iv_snapshot(self, symbol: str, *, as_of: date, spot: float) -> dict[str, Any]:
+        client = self._get_option_data_client()
+        _, _, request_class = _resolve_option_data_classes()
+        if client is None or request_class is None:
+            return {"current_iv": 0.0, "iv_rank": 0.0, "iv_percentile": 0.0, "iv_source": "unavailable", "iv_rank_source": "unavailable"}
+        min_dte, max_dte = self._live_chain_dte_range()
+        strike_gte, strike_lte = self._live_chain_strike_bounds(spot)
         try:
-            raw_chain = client.get_option_chain(request)
+            snapshots = self._get_live_option_chain_snapshots(
+                symbol=symbol,
+                as_of=as_of,
+                min_dte=min_dte,
+                max_dte=max_dte,
+                strike_gte=strike_gte,
+                strike_lte=strike_lte,
+            )
         except Exception as exc:
             _LOGGER.warning("live option IV snapshot unavailable for %s: %s", symbol, exc)
             return {"current_iv": 0.0, "iv_rank": 0.0, "iv_percentile": 0.0, "iv_source": "alpaca_option_chain_error", "iv_rank_source": "unavailable"}
-        snapshots = raw_chain if isinstance(raw_chain, dict) else getattr(raw_chain, "data", {})
-        if not isinstance(snapshots, dict):
+        if not snapshots:
             return {"current_iv": 0.0, "iv_rank": 0.0, "iv_percentile": 0.0, "iv_source": "unavailable", "iv_rank_source": "unavailable"}
         chain_ivs = [
             iv
