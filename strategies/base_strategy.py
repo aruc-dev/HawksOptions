@@ -76,6 +76,37 @@ class BaseStrategy(ABC):
             return 0
         return min(non_negative_limits)
 
+    def risk_scaled_order_quantity(self, context: StrategyContext, *, unit_max_loss: float, default: int = 1) -> int:
+        """Return quantity capped by config risk limits and IV-rank sizing.
+
+        This never exceeds the strategy/underlying contract limit. It only
+        scales down when account risk budget or IV rank warrants a smaller
+        entry size.
+        """
+        max_qty = self.order_quantity(context, default=default)
+        if max_qty <= 0 or unit_max_loss <= 0:
+            return 0
+        equity = _account_equity(context.account)
+        if equity <= 0:
+            return max_qty
+        single_risk_pct = float(self.config.get("account", {}).get("max_single_position_risk_pct", 0.05))
+        risk_budget = max(0.0, equity * single_risk_pct)
+        sizing = self.config.get("position_sizing", {}).get("iv_rank_scaled", {})
+        size_fraction = 1.0
+        if isinstance(sizing, dict) and bool(sizing.get("enabled", False)):
+            min_iv = float(sizing.get("min_iv_rank", 30.0))
+            max_iv = max(min_iv, float(sizing.get("max_iv_rank", 80.0)))
+            min_fraction = max(0.0, min(float(sizing.get("min_size_fraction", 0.35)), 1.0))
+            max_fraction = max(min_fraction, min(float(sizing.get("max_size_fraction", 1.0)), 1.0))
+            progress = 1.0 if max_iv == min_iv else (float(context.iv_rank) - min_iv) / (max_iv - min_iv)
+            progress = max(0.0, min(progress, 1.0))
+            size_fraction = min_fraction + ((max_fraction - min_fraction) * progress)
+        scaled_budget = risk_budget * size_fraction
+        budget_qty = int(scaled_budget // unit_max_loss)
+        if budget_qty < 1:
+            return 0
+        return max(0, min(max_qty, budget_qty))
+
     def apply_contract_quantity(self, order: StrategyOrder, qty: int) -> StrategyOrder:
         qty = max(1, int(qty))
         if qty == 1:
@@ -194,3 +225,14 @@ class BaseStrategy(ABC):
     @abstractmethod
     def generate_order(self, context: StrategyContext):  # pragma: no cover - interface only
         raise NotImplementedError
+
+
+def _account_equity(account: dict[str, Any]) -> float:
+    for key in ("equity", "portfolio_value"):
+        try:
+            value = float(account.get(key, 0.0))
+        except (TypeError, ValueError):
+            value = 0.0
+        if value > 0:
+            return value
+    return 0.0

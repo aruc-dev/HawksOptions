@@ -215,6 +215,9 @@ def _context_analytics_cache_key(context: StrategyContext) -> tuple[Any, ...]:
         context.underlying.get("symbol"),
         context.underlying_price,
         context.as_of,
+        context.underlying.get("event_risk"),
+        context.underlying.get("event_risk_level"),
+        context.underlying.get("event_risk_reason"),
         tuple(contract.contract_symbol for contract in context.chain[:20]),
     )
 

@@ -75,9 +75,15 @@ def close_order_plans(
     client: Any,
     execute_enabled: bool,
     dry_run: bool,
+    allowed_auto_close_actions: Iterable[str] | None = None,
 ) -> list[dict[str, Any]]:
     positions_by_id = {position.strategy_id: position for position in positions}
     plans = reconcile_pending_closes(positions_by_id.values(), client=client)
+    allowed_actions = (
+        set(CLOSE_ACTIONS)
+        if allowed_auto_close_actions is None
+        else {str(item) for item in allowed_auto_close_actions}
+    )
     for action in _dedupe_close_actions(actions, positions_by_id):
         action_name = str(action.get("action", ""))
         strategy_id = str(action.get("strategy_id", ""))
@@ -107,12 +113,13 @@ def close_order_plans(
         plan = {
             "strategy_id": strategy_id,
             "action": action_name,
-            "dry_run": bool(dry_run or not execute_enabled),
+            "dry_run": bool(dry_run or not execute_enabled or action_name not in allowed_actions),
             "execute_enabled": bool(execute_enabled),
+            "auto_close_allowed": action_name in allowed_actions,
             "payload": payload,
             "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
-        if execute_enabled and not dry_run:
+        if execute_enabled and not dry_run and action_name in allowed_actions:
             nbbo_snapshot = capture_nbbo_snapshot(client, position)
             plan["nbbo_snapshot"] = nbbo_snapshot
             if not has_complete_client_nbbo(nbbo_snapshot):

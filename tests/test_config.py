@@ -140,6 +140,8 @@ class TestLocalConfigOverlay(unittest.TestCase):
                 "mode: paper\n"
                 "account:\n"
                 "  daily_loss_halt_pct: 0.03\n"
+                "risk_throttle:\n"
+                "  daily_loss_halt_pct: 4\n"
                 "reporting:\n"
                 "  trade_log_file: data/trades.csv\n",
                 encoding="utf-8",
@@ -158,7 +160,7 @@ class TestLocalConfigOverlay(unittest.TestCase):
                 trade_log_path = config.trade_log_path
 
         self.assertEqual(mode, "live")
-        self.assertEqual(daily_loss_limit, 0.02)
+        self.assertEqual(daily_loss_limit, 0.04)
         self.assertEqual(trade_log_path.name, "trades.csv")
 
 
@@ -176,7 +178,7 @@ class TestCommittedPaperDefaults(unittest.TestCase):
 
     def test_default_underlyings_do_not_enable_cash_secured_entries(self):
         payload = cfg_mod.load_yaml(cfg_mod.BASE_DIR / "config" / "underlyings.yaml")
-        defined_risk_entries = {"vertical_spread", "iron_condor"}
+        defined_risk_entries = {"vertical_spread", "iron_condor", "tail_risk_hedge", "earnings_iron_condor"}
 
         self.assertGreater(len(payload["underlyings"]), 0)
         for underlying in payload["underlyings"]:

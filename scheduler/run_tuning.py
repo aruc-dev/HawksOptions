@@ -17,7 +17,7 @@ import argparse
 import json
 import sys
 from copy import deepcopy
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from itertools import product
 from pathlib import Path
 from typing import Any
@@ -28,6 +28,15 @@ sys.path.insert(0, str(BASE_DIR))
 from core.backtest_engine import run_backtest
 from core.config import load_config
 from strategies import build_enabled_strategies
+
+
+VERTICAL_SPREAD_GRID = [
+    "strategies.vertical_spread.short_delta=-0.20,-0.25,-0.30",
+    "strategies.vertical_spread.long_delta=-0.08,-0.10,-0.12",
+    "strategies.vertical_spread.target_dte=28,35,42",
+    "strategies.vertical_spread.profit_take_pct=0.35,0.50,0.65",
+    "strategies.vertical_spread.loss_stop_multiple=1.0,1.5,2.0",
+]
 
 
 def _coerce(value: str) -> Any:
@@ -101,12 +110,53 @@ def _run_once(
         "return_pct": result.total_return_pct,
         "sharpe": result.sharpe,
         "drawdown_pct": result.max_drawdown_pct,
+        "profit_factor": result.metrics.get("profit_factor", 0.0),
+        "expectancy": result.metrics.get("expectancy", 0.0),
         "win_rate": result.win_rate,
         "trades": result.trade_count,
         "closed": result.closed_trade_count,
         "rejected_reasons": result.rejected_reasons,
         "ending_equity": result.ending_equity,
     }
+
+
+def _score_run(run: dict[str, Any]) -> float:
+    metrics = run.get("test", run)
+    sharpe = float(metrics.get("sharpe", 0.0))
+    profit_factor = float(metrics.get("profit_factor", 0.0))
+    expectancy = float(metrics.get("expectancy", 0.0))
+    drawdown = float(metrics.get("drawdown_pct", 0.0))
+    penalty = max(0.0, drawdown - 8.0) * 2.0
+    return round(sharpe + profit_factor + (expectancy / 100.0) - penalty, 6)
+
+
+def _top_runs(runs: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
+    eligible = []
+    for run in runs:
+        metrics = run.get("test", run)
+        enriched = deepcopy(run)
+        enriched["score"] = _score_run(run)
+        enriched["passes_constraints"] = (
+            float(metrics.get("drawdown_pct", 0.0)) <= 8.0
+            and float(metrics.get("profit_factor", 0.0)) >= 1.2
+            and float(metrics.get("expectancy", 0.0)) > 0.0
+        )
+        eligible.append(enriched)
+    return sorted(eligible, key=lambda item: (item["passes_constraints"], item["score"]), reverse=True)[:limit]
+
+
+def _write_tuning_report(*, runs: list[dict[str, Any]], output_dir: Path, top: int) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc)
+    path = output_dir / f"tuning_{now:%Y%m%d-%H%M%S}.json"
+    payload = {
+        "generated_at": now.isoformat(timespec="seconds"),
+        "objective": "maximize sharpe + profit factor + expectancy with max drawdown <= 8%",
+        "top": _top_runs(runs, limit=top),
+        "run_count": len(runs),
+    }
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str), encoding="utf-8")
+    return path
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -125,6 +175,13 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         help="grid override, e.g. strategies.iron_condor.profit_take_pct=0.25,0.35",
     )
+    parser.add_argument(
+        "--preset",
+        choices=["vertical-spread"],
+        help="append a production-readiness grid preset",
+    )
+    parser.add_argument("--output-dir", default="reports/tuning", help="directory for top-run tuning reports")
+    parser.add_argument("--top", type=int, default=5, help="number of top parameter sets to persist")
     parser.add_argument("--start-date", help="optional YYYY-MM-DD replay start date")
     parser.add_argument(
         "--walk-forward",
@@ -136,7 +193,10 @@ def main(argv: list[str] | None = None) -> int:
 
     base_config = deepcopy(load_config())
     fixed_overrides = [_parse_assignment(raw) for raw in args.override]
-    grid_options = _parse_grid(args.grid)
+    grid_items = list(args.grid)
+    if args.preset == "vertical-spread":
+        grid_items.extend(VERTICAL_SPREAD_GRID)
+    grid_options = _parse_grid(grid_items)
     combinations = list(product(*grid_options)) if grid_options else [()]
     start = date.fromisoformat(args.start_date) if args.start_date else None
     runs = []
@@ -182,6 +242,11 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
     summary = runs[0] if len(runs) == 1 and not args.walk_forward else {"runs": runs}
+    if grid_options:
+        output_path = _write_tuning_report(runs=runs, output_dir=Path(args.output_dir), top=max(1, args.top))
+        if isinstance(summary, dict):
+            summary["tuning_report_path"] = str(output_path)
+            summary["top"] = _top_runs(runs, limit=max(1, args.top))
     print(json.dumps(summary))
     return 0
 

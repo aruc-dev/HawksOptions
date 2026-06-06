@@ -15,6 +15,10 @@ from scheduler.run_scan import _market_context_for_scan, _symbol_scan_health, sc
 def _sample_scan_config() -> dict:
     config = load_config()
     config["market_data"]["use_sample_data"] = True
+    # Most scan tests validate ranking/report plumbing, not production
+    # profitability gates. Keep the fixture permissive so it produces
+    # deterministic candidates.
+    config["strategies"]["vertical_spread"]["min_credit_to_roundtrip_cost"] = 0
     return config
 
 
@@ -143,8 +147,7 @@ class RunScanTests(unittest.TestCase):
 
     def test_scan_logs_deterministic_rejects_before_ai(self):
         config = _sample_scan_config()
-        config["account"]["max_single_position_risk_pct"] = 0.000001
-        config["account"]["max_portfolio_risk_pct"] = 0.000001
+        config["account"]["options_level"] = 1
         with TemporaryDirectory() as tmp:
             config["reporting"]["reports_dir"] = tmp
             result = scan_market(config=config, as_of=date(2026, 4, 23), dry_run=True)

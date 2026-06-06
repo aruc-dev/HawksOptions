@@ -20,6 +20,10 @@ class SystemdSecretsTests(unittest.TestCase):
             self.assertIn("Wants=network-online.target hawksoptions-secrets.service", text, unit.name)
             self.assertIn("After=network-online.target hawksoptions-secrets.service", text, unit.name)
 
+    def test_risk_watch_timer_persists_explicitly(self):
+        text = (SYSTEMD_DIR / "hawksoptions-risk-watch.service").read_text(encoding="utf-8")
+        self.assertIn("scheduler/run_risk_watch.py --persist", text)
+
     def test_secrets_service_accepts_forced_refresh_and_fixes_legacy_file_owner(self):
         text = (SYSTEMD_DIR / "hawksoptions-secrets.service").read_text(encoding="utf-8")
         self.assertIn("PassEnvironment=HAWKSOPTIONS_SECRETS_FORCE_REFRESH", text)
@@ -41,6 +45,53 @@ class SystemdSecretsTests(unittest.TestCase):
         self.assertIn("reusing existing", text)
         self.assertIn("reusing fresh", text)
         subprocess.run(["bash", "-n", str(script)], check=True)
+
+    def test_prune_reports_service_matches_trading_job_layout(self):
+        text = (SYSTEMD_DIR / "hawksoptions-prune-reports.service").read_text(encoding="utf-8")
+        self.assertIn("User=ec2-user", text)
+        self.assertIn("Group=ec2-user", text)
+        self.assertIn("WorkingDirectory=/home/ec2-user/HawksOptions", text)
+        self.assertIn("ExecStart=/home/ec2-user/HawksOptions/scripts/prune_reports.sh", text)
+        self.assertNotIn("/opt/hawksoptions", text)
+
+    def test_kill_script_creates_halt_file_with_restrictive_umask(self):
+        script = ROOT / "scripts" / "kill.sh"
+        text = script.read_text(encoding="utf-8")
+        self.assertIn("umask 077", text)
+        subprocess.run(["bash", "-n", str(script)], check=True)
+
+    def test_prune_reports_script_passes_filenames_after_option_separator(self):
+        script = ROOT / "scripts" / "prune_reports.sh"
+        text = script.read_text(encoding="utf-8")
+        self.assertIn("gzip -9 -c --", text)
+        self.assertIn("touch -r", text)
+        self.assertIn("mv -f --", text)
+        self.assertIn("rm -f --", text)
+        subprocess.run(["bash", "-n", str(script)], check=True)
+
+    def test_prune_reports_preserves_mtime_when_compressing(self):
+        script = ROOT / "scripts" / "prune_reports.sh"
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "scan.json"
+            report.write_text("{}", encoding="utf-8")
+            old_mtime = time.time() - (2 * 24 * 60 * 60)
+            os.utime(report, (old_mtime, old_mtime))
+
+            subprocess.run(
+                ["bash", str(script)],
+                check=True,
+                env={
+                    **os.environ,
+                    "HAWKSOPTIONS_REPORTS_DIR": tmp,
+                    "HAWKSOPTIONS_GZIP_REPORTS_AFTER_DAYS": "0",
+                    "HAWKSOPTIONS_DELETE_REPORTS_AFTER_DAYS": "90",
+                },
+            )
+
+            compressed = Path(f"{report}.gz")
+            self.assertFalse(report.exists())
+            self.assertTrue(compressed.exists())
+            self.assertEqual(int(compressed.stat().st_mtime), int(old_mtime))
 
     def _write_valid_existing_file(self, path: str):
         Path(path).write_text(
