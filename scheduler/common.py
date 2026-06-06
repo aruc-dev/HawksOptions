@@ -11,16 +11,29 @@ from core.broker_adapter import TradingClient
 from core.config import BASE_DIR, ensure_runtime_dirs, load_config, load_underlyings, reporting_path
 from core.models import OrderLeg, PositionSnapshot, StrategyContext
 from core.order_executor import load_positions
+from core.reconciler import reconcile_state
+from core.runtime_guard import assert_runtime_allowed
+
+
+def _optional_reporting_path(config: dict[str, Any], key: str, default: str) -> Path:
+    reporting = config.get("reporting", {})
+    value = reporting.get(key) if isinstance(reporting, dict) else None
+    if value in (None, ""):
+        return BASE_DIR / default
+    return reporting_path(config, key)
 
 
 def runtime_paths(config: dict[str, Any]) -> dict[str, Path]:
     return {
         "trade_log": reporting_path(config, "trade_log_file"),
         "positions": reporting_path(config, "positions_file"),
+        "elevated_positions": _optional_reporting_path(config, "elevated_positions_file", "data/elevated_positions.json"),
+        "halt_file": _optional_reporting_path(config, "halt_file", "data/HALTED"),
         "greeks_dir": reporting_path(config, "greeks_snapshot_dir"),
         "iv_history": reporting_path(config, "iv_history_file"),
         "reports_dir": reporting_path(config, "reports_dir"),
         "logs_dir": reporting_path(config, "logs_dir"),
+        "metrics": _optional_reporting_path(config, "metrics_textfile", "reports/metrics/hawksoptions.prom"),
         "baseline": BASE_DIR / "data" / "daily_loss_baseline.json",
     }
 
@@ -28,8 +41,21 @@ def runtime_paths(config: dict[str, Any]) -> dict[str, Path]:
 def load_runtime(config: dict[str, Any] | None = None) -> tuple[dict[str, Any], TradingClient, dict[str, Path]]:
     config = config or load_config()
     ensure_runtime_dirs(config)
+    paths = runtime_paths(config)
+    assert_runtime_allowed(config, halt_file=paths["halt_file"])
     client = AlpacaOptionsClient(config)
-    return config, client, runtime_paths(config)
+    reconciliation = config.get("reconciliation", {})
+    if isinstance(reconciliation, dict) and bool(reconciliation.get("enabled", False)):
+        if not (client.use_sample_data and bool(reconciliation.get("skip_when_using_sample_data", True))):
+            report = reconcile_state(
+                client=client,
+                positions_path=paths["positions"],
+                reports_dir=paths["reports_dir"],
+                halt_file=paths["halt_file"],
+            )
+            if report.get("halted"):
+                assert_runtime_allowed(config, halt_file=paths["halt_file"])
+    return config, client, paths
 
 
 def current_positions(paths: dict[str, Path]) -> list[PositionSnapshot]:

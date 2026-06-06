@@ -53,13 +53,13 @@ def allocation_limit_reasons(
     family_usage = allocation_by_family(positions)
     for family in strategy_families(order.strategy_name, net_credit=order.net_opening_credit):
         cap_pct = family_caps.get(family)
-        if cap_pct is not None and family_usage[family] + incoming_risk > cap_pct * equity:
+        if cap_pct is not None and family_usage.get(family, 0.0) + incoming_risk > cap_pct * equity:
             reasons.append(f"portfolio_allocation_{family}_cap_exceeded")
 
     underlying_usage = allocation_by_underlying(positions)
     symbol = order.underlying
     cap_pct = underlying_caps.get(symbol, single_underlying_cap)
-    if cap_pct is not None and underlying_usage[symbol] + incoming_risk > cap_pct * equity:
+    if cap_pct is not None and underlying_usage.get(symbol, 0.0) + incoming_risk > cap_pct * equity:
         reasons.append("underlying_allocation_cap_exceeded")
     return reasons
 

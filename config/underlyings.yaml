@@ -1,13 +1,21 @@
 underlyings:
   - symbol: SPY
+    sector: diversified_etf
+    correlation_group: broad_market
+    beta_to_spy: 1.00
+    tax_classification: section_1256_index_proxy
     max_contracts: 5
-    strategies_allowed: [vertical_spread, iron_condor]
+    strategies_allowed: [vertical_spread, iron_condor, tail_risk_hedge]
     next_earnings_date:
     ex_dividend_date: 2026-06-19
     dividend_amount: 1.95
     realized_vol_20d: 0.14
     atr_pct: 0.012
   - symbol: QQQ
+    sector: technology_etf
+    correlation_group: growth_large_cap
+    beta_to_spy: 1.18
+    tax_classification: equity_option
     max_contracts: 5
     strategies_allowed: [vertical_spread, iron_condor]
     next_earnings_date:
@@ -16,6 +24,10 @@ underlyings:
     realized_vol_20d: 0.18
     atr_pct: 0.015
   - symbol: IWM
+    sector: small_cap_etf
+    correlation_group: small_cap
+    beta_to_spy: 1.12
+    tax_classification: equity_option
     max_contracts: 3
     strategies_allowed: [iron_condor, vertical_spread]
     next_earnings_date:
@@ -24,16 +36,24 @@ underlyings:
     realized_vol_20d: 0.19
     atr_pct: 0.017
   - symbol: AAPL
+    sector: technology
+    correlation_group: mega_cap_tech
+    beta_to_spy: 1.25
+    tax_classification: equity_option
     max_contracts: 2
-    strategies_allowed: [vertical_spread]
+    strategies_allowed: [vertical_spread, earnings_iron_condor]
     next_earnings_date:
     ex_dividend_date:
     dividend_amount: 0.27
     realized_vol_20d: 0.22
     atr_pct: 0.021
   - symbol: MSFT
+    sector: technology
+    correlation_group: mega_cap_tech
+    beta_to_spy: 1.08
+    tax_classification: equity_option
     max_contracts: 2
-    strategies_allowed: [vertical_spread]
+    strategies_allowed: [vertical_spread, earnings_iron_condor]
     next_earnings_date:
     ex_dividend_date:
     dividend_amount: 0.83

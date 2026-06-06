@@ -119,7 +119,7 @@ def pre_trade_check(
 
     open_positions = list(open_positions)
     open_risk = sum(float(position.max_loss) for position in open_positions)
-    if open_risk + order.max_loss > float(account_cfg.get("max_portfolio_risk_pct", 0.2)) * equity:
+    if open_risk + order.max_loss > _effective_max_portfolio_risk_pct(config, account) * equity:
         reasons.append("portfolio_risk_cap_exceeded")
 
     if order.max_loss > float(account_cfg.get("max_single_position_risk_pct", 0.05)) * equity:
@@ -216,6 +216,8 @@ def _short_premium_iv_rank_threshold(order: StrategyOrder, gates: dict[str, Any]
         return base, False
     context = _market_volatility_context(order, account)
     if context is None:
+        if not bool(scaling.get("require_market_context", True)):
+            return base, False
         return None, True
     vix = float(context["vix"])
     scale = str(context.get("scale", "index")).lower()
@@ -264,6 +266,33 @@ def _market_volatility_context(order: StrategyOrder, account: dict[str, Any]) ->
             "scale": context.get("vix_scale") or context.get("volatility_scale") or "index",
         }
     return None
+
+
+def _effective_max_portfolio_risk_pct(config: dict[str, Any], account: dict[str, Any]) -> float:
+    account_cfg = config.get("account", {})
+    base = float(account_cfg.get("max_portfolio_risk_pct", 0.2))
+    targeting = config.get("portfolio_vol_targeting") or {}
+    if not isinstance(targeting, dict) or not bool(targeting.get("enabled", False)):
+        return base
+    market_context = account.get("market_context")
+    if not isinstance(market_context, dict):
+        return base
+    realized_vol = _optional_float(
+        market_context.get("realized_vol_20d")
+        or market_context.get("spy_realized_vol_20d")
+        or market_context.get("vix_realized_vol_proxy")
+    )
+    if realized_vol is None or realized_vol <= 0:
+        return base
+    target_vol = _optional_float(targeting.get("target_realized_vol")) or realized_vol
+    min_cap = _optional_float(targeting.get("min_portfolio_risk_pct"))
+    max_cap = _optional_float(targeting.get("max_portfolio_risk_pct"))
+    scaled = base * (target_vol / realized_vol)
+    if min_cap is not None:
+        scaled = max(min_cap, scaled)
+    if max_cap is not None:
+        scaled = min(max_cap, scaled)
+    return max(0.0, scaled)
 
 
 def _optional_float(value: Any) -> float | None:

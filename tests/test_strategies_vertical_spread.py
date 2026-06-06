@@ -14,6 +14,7 @@ class VerticalSpreadStrategyTests(unittest.TestCase):
     def test_generates_defined_risk_spread(self):
         config = deepcopy(load_config())
         config["strategies"]["vertical_spread"]["enabled"] = True
+        config["strategies"]["vertical_spread"]["min_credit_to_roundtrip_cost"] = 0
         client = AlpacaOptionsClient(config, use_sample_data=True)
         underlying = load_underlyings(config)[0]
         snapshot = client.get_underlying_snapshot(underlying["symbol"], as_of=date(2026, 4, 23))
@@ -35,6 +36,7 @@ class VerticalSpreadStrategyTests(unittest.TestCase):
     def test_past_earnings_date_does_not_block_generation(self):
         config = deepcopy(load_config())
         config["strategies"]["vertical_spread"]["enabled"] = True
+        config["strategies"]["vertical_spread"]["min_credit_to_roundtrip_cost"] = 0
         client = AlpacaOptionsClient(config, use_sample_data=True)
         underlying = {
             **load_underlyings(config)[0],

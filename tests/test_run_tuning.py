@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import unittest
 import json
+import tempfile
+import unittest
 from contextlib import redirect_stdout
+from datetime import datetime
 from io import StringIO
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from core.backtest_engine import BacktestResult
@@ -65,7 +66,7 @@ class RunTuningTests(unittest.TestCase):
                 )
             return result, None
 
-        with TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp:
             config = run_tuning.load_config()
             config["reporting"]["reports_dir"] = tmp
             stdout = StringIO()
@@ -95,6 +96,15 @@ class RunTuningTests(unittest.TestCase):
         self.assertEqual(len(payload["profitable_runs"]), 1)
         self.assertIn("# HawksOptions Tuning Report", report)
         self.assertIn("run-2", report)
+
+    def test_tuning_report_reuses_filename_timestamp_in_payload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = run_tuning._write_tuning_report(runs=[], output_dir=Path(tmp), top=1)
+            payload = json.loads(path.read_text(encoding="utf-8"))
+
+        filename_timestamp = path.stem.removeprefix("tuning_")
+        payload_timestamp = datetime.fromisoformat(payload["generated_at"]).strftime("%Y%m%d-%H%M%S")
+        self.assertEqual(payload_timestamp, filename_timestamp)
 
 
 if __name__ == "__main__":
