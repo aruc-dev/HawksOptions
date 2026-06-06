@@ -68,7 +68,8 @@ def _days_until(target: date | None, as_of: date | datetime) -> int | None:
     if target is None:
         return None
     ref = as_of.date() if isinstance(as_of, datetime) else as_of
-    return (target - ref).days
+    days = (target - ref).days
+    return days if days >= 0 else None
 
 
 def _position_dte(position: PositionSnapshot, as_of: date) -> int:

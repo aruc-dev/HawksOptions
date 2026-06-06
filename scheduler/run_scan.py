@@ -19,8 +19,10 @@ from ai.news_client import fetch_headlines
 from ai.news_gate import evaluate_news_gate
 from ai.openai_client import critique_with_llm, safe_review_result
 from ai.trade_idea_critic import critique_trade
+from core.contract_selector import select_iron_condor, select_vertical_spread
+from core.event_freshness import event_data_freshness_report
 from core.file_lock import atomic_write_text
-from core.models import OptionContract, StrategyContext, StrategyOrder
+from core.models import OptionContract, OrderLeg, StrategyContext, StrategyOrder
 from core.order_executor import execute_order, persist_open_order, position_from_order
 from core.quote_freshness import quote_timestamp
 from core.risk_manager import pre_trade_check
@@ -30,6 +32,40 @@ from strategies.earnings_calendar_scanner import scan_earnings_calendar_candidat
 from strategies.selection import build_candidate, rank_candidates
 
 _LOGGER = logging.getLogger(__name__)
+
+_EARNINGS_BLACKOUT_STRATEGIES = {
+    "broken_wing_butterfly",
+    "butterfly",
+    "cash_secured_put",
+    "collar",
+    "covered_call",
+    "diagonal_spread",
+    "iron_condor",
+    "tail_risk_hedge",
+    "vertical_spread",
+}
+_EVENT_RISK_STRATEGIES = {
+    "broken_wing_butterfly",
+    "butterfly",
+    "calendar_spread",
+    "cash_secured_put",
+    "collar",
+    "covered_call",
+    "diagonal_spread",
+    "iron_condor",
+    "vertical_spread",
+}
+_TECHNICAL_REGIME_STRATEGIES = {
+    "cash_secured_put",
+    "covered_call",
+    "iron_condor",
+    "vertical_spread",
+}
+_IV_REALIZED_STRATEGIES = {
+    "broken_wing_butterfly",
+    "iron_condor",
+    "vertical_spread",
+}
 
 
 def _remaining_entry_slots(config: dict[str, Any], open_position_count: int) -> int:
@@ -244,6 +280,7 @@ def _persist_candidate_scan(
         "research_candidates": payload["research_candidates"],
         "research_traces": payload["research_traces"],
         "ai_disagreements": payload["ai_disagreements"],
+        "event_data_health": payload["event_data_health"],
         "chosen_order": payload["accepted"][0] if payload["accepted"] else None,
         "chosen_orders": payload["accepted"],
         "accepted": payload["accepted"],
@@ -349,6 +386,303 @@ def _missing_greeks_by_field(chain: list[OptionContract]) -> dict[str, int]:
     }
 
 
+def _append_unique(items: list[str], value: str) -> None:
+    if value not in items:
+        items.append(value)
+
+
+def _safe_spread_pct(contract: OptionContract) -> float | None:
+    spread = contract.spread_pct()
+    return None if spread == float("inf") else round(float(spread), 6)
+
+
+def _contract_near_miss_summary(contract: OptionContract, *, as_of: date | datetime) -> dict[str, Any]:
+    return {
+        "contract_symbol": contract.contract_symbol,
+        "option_type": contract.option_type,
+        "strike": float(contract.strike),
+        "expiration": contract.expiration.isoformat(),
+        "dte": contract.days_to_expiration(as_of),
+        "bid": float(contract.bid),
+        "ask": float(contract.ask),
+        "mid_price": contract.mid_price(),
+        "spread_pct": _safe_spread_pct(contract),
+        "open_interest": int(contract.open_interest),
+        "volume": int(contract.volume),
+        "delta": contract.delta,
+        "implied_volatility": float(contract.implied_volatility),
+    }
+
+
+def _nearest_contracts(
+    contracts: list[OptionContract],
+    *,
+    target_delta: float,
+    target_dte: int,
+    as_of: date | datetime,
+    limit: int = 3,
+) -> list[dict[str, Any]]:
+    candidates = [contract for contract in contracts if contract.delta is not None]
+    candidates.sort(
+        key=lambda contract: (
+            abs(abs(float(contract.delta or 0.0)) - abs(target_delta)),
+            abs(contract.days_to_expiration(as_of) - target_dte),
+            contract.spread_pct(),
+        )
+    )
+    return [_contract_near_miss_summary(contract, as_of=as_of) for contract in candidates[:limit]]
+
+
+def _leg_quality_summary(contracts: list[OptionContract]) -> dict[str, Any]:
+    spreads = [
+        spread
+        for spread in (_safe_spread_pct(contract) for contract in contracts)
+        if spread is not None
+    ]
+    return {
+        "min_open_interest": min((int(contract.open_interest) for contract in contracts), default=0),
+        "min_volume": min((int(contract.volume) for contract in contracts), default=0),
+        "avg_spread_pct": round(sum(spreads) / len(spreads), 6) if spreads else None,
+    }
+
+
+def _vertical_option_type(strategy: Any, context: StrategyContext) -> str | None:
+    variant = str(strategy.params.get("variant", "bull_put_credit"))
+    if variant == "auto":
+        trend = context.trend_20d
+        if trend is None:
+            trend = context.underlying.get("trend_20d", 0.0)
+        variant = "bull_put_credit" if float(trend or 0.0) >= 0 else "bear_call_credit"
+    if variant in {"bull_put_credit", "bullish"}:
+        return "put"
+    if variant in {"bear_call_credit", "bearish"}:
+        return "call"
+    return None
+
+
+def _vertical_generation_reasons(strategy: Any, context: StrategyContext, details: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    option_type = _vertical_option_type(strategy, context)
+    details["variant"] = str(strategy.params.get("variant", "bull_put_credit"))
+    details["option_type"] = option_type
+    if option_type is None:
+        return ["unsupported_vertical_variant"]
+    if not strategy.volatility_surface_filter_passes(context, option_type=option_type):
+        _append_unique(reasons, f"{option_type}_surface")
+    filtered = strategy.filtered_chain(context, option_type)
+    details["filtered_contract_count"] = len(filtered)
+    pair = select_vertical_spread(
+        filtered,
+        short_delta=float(strategy.params.get("short_delta", -0.25)),
+        long_delta=float(strategy.params.get("long_delta", -0.10)),
+        option_type=option_type,
+        target_dte=int(strategy.params.get("target_dte", 35)),
+        as_of=context.as_of,
+    )
+    if not filtered:
+        _append_unique(reasons, f"no_filtered_{option_type}s")
+    elif pair is None:
+        _append_unique(reasons, "no_delta_pair")
+        target_dte = int(strategy.params.get("target_dte", 35))
+        details["near_miss"] = {
+            "structure": "vertical_spread",
+            "option_type": option_type,
+            "filtered_contract_count": len(filtered),
+            "nearest_short_candidates": _nearest_contracts(
+                filtered,
+                target_delta=float(strategy.params.get("short_delta", -0.25)),
+                target_dte=target_dte,
+                as_of=context.as_of,
+            ),
+            "nearest_long_candidates": _nearest_contracts(
+                filtered,
+                target_delta=float(strategy.params.get("long_delta", -0.10)),
+                target_dte=target_dte,
+                as_of=context.as_of,
+            ),
+        }
+    else:
+        short_leg, long_leg = pair
+        width = abs(short_leg.strike - long_leg.strike) * 100.0
+        credit = round((short_leg.mid_price() - long_leg.mid_price()) * 100.0, 2)
+        legs = [
+            OrderLeg(contract=short_leg, side="sell_to_open", qty=1),
+            OrderLeg(contract=long_leg, side="buy_to_open", qty=1),
+        ]
+        modeled_roundtrip_cost = strategy.modeled_entry_cost(legs) * 2.0
+        details["selected_credit"] = credit
+        details["selected_width"] = width
+        details["near_miss"] = {
+            "structure": "vertical_spread",
+            "option_type": option_type,
+            "credit": credit,
+            "width": width,
+            "max_loss": round(max(0.0, width - credit), 2),
+            "credit_to_width": round(credit / width, 6) if width > 0 else None,
+            "modeled_roundtrip_cost": round(modeled_roundtrip_cost, 4),
+            "required_credit_for_roundtrip": round(
+                modeled_roundtrip_cost * float(strategy.params.get("min_credit_to_roundtrip_cost", 0.0)),
+                4,
+            ),
+            "legs": [
+                {"side": "sell_to_open", **_contract_near_miss_summary(short_leg, as_of=context.as_of)},
+                {"side": "buy_to_open", **_contract_near_miss_summary(long_leg, as_of=context.as_of)},
+            ],
+            **_leg_quality_summary([short_leg, long_leg]),
+        }
+        if credit <= 0:
+            _append_unique(reasons, "non_positive_credit")
+        if width <= credit:
+            _append_unique(reasons, "invalid_spread_width")
+        if not strategy.credit_quality_passes(credit=credit, width=width):
+            _append_unique(reasons, "credit_quality")
+    return reasons
+
+
+def _iron_condor_generation_reasons(strategy: Any, context: StrategyContext, details: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    min_iv_rank = float(strategy.params.get("min_iv_rank", 0.0))
+    details["min_iv_rank"] = min_iv_rank
+    if min_iv_rank > 0 and context.iv_rank < min_iv_rank:
+        _append_unique(reasons, "iv_rank_below_min")
+    if not strategy.volatility_surface_filter_passes(context, option_type="put"):
+        _append_unique(reasons, "put_surface")
+    if not strategy.volatility_surface_filter_passes(context, option_type="call"):
+        _append_unique(reasons, "call_surface")
+    max_atr = float(strategy.params.get("max_atr_pct", 0.03))
+    details["max_atr_pct"] = max_atr
+    if context.atr_pct > max_atr:
+        _append_unique(reasons, "atr_above_max")
+    contracts = select_iron_condor(
+        context.chain,
+        put_short_delta=float(strategy.params.get("put_short_delta", -0.18)),
+        put_long_delta=float(strategy.params.get("put_long_delta", -0.08)),
+        call_short_delta=float(strategy.params.get("call_short_delta", 0.18)),
+        call_long_delta=float(strategy.params.get("call_long_delta", 0.08)),
+        target_dte=int(strategy.params.get("target_dte", 40)),
+        as_of=context.as_of,
+    )
+    if contracts is None:
+        _append_unique(reasons, "no_iron_condor_structure")
+        target_dte = int(strategy.params.get("target_dte", 40))
+        puts = [contract for contract in context.chain if contract.option_type == "put"]
+        calls = [contract for contract in context.chain if contract.option_type == "call"]
+        details["near_miss"] = {
+            "structure": "iron_condor",
+            "nearest_put_short_candidates": _nearest_contracts(
+                puts,
+                target_delta=float(strategy.params.get("put_short_delta", -0.18)),
+                target_dte=target_dte,
+                as_of=context.as_of,
+            ),
+            "nearest_put_long_candidates": _nearest_contracts(
+                puts,
+                target_delta=float(strategy.params.get("put_long_delta", -0.08)),
+                target_dte=target_dte,
+                as_of=context.as_of,
+            ),
+            "nearest_call_short_candidates": _nearest_contracts(
+                calls,
+                target_delta=float(strategy.params.get("call_short_delta", 0.18)),
+                target_dte=target_dte,
+                as_of=context.as_of,
+            ),
+            "nearest_call_long_candidates": _nearest_contracts(
+                calls,
+                target_delta=float(strategy.params.get("call_long_delta", 0.08)),
+                target_dte=target_dte,
+                as_of=context.as_of,
+            ),
+        }
+        return reasons
+    short_put, long_put, short_call, long_call = contracts
+    credit = round(
+        (short_put.mid_price() + short_call.mid_price() - long_put.mid_price() - long_call.mid_price()) * 100.0,
+        2,
+    )
+    put_width = abs(short_put.strike - long_put.strike) * 100.0
+    call_width = abs(long_call.strike - short_call.strike) * 100.0
+    width = max(put_width, call_width)
+    max_loss = round(width - credit, 2)
+    details["selected_credit"] = credit
+    details["selected_width"] = width
+    details["selected_max_loss"] = max_loss
+    if credit <= 0:
+        _append_unique(reasons, "non_positive_credit")
+    if max_loss <= 0:
+        _append_unique(reasons, "non_positive_max_loss")
+    min_credit_to_width = float(strategy.params.get("min_credit_to_width", 0.0))
+    details["min_credit_to_width"] = min_credit_to_width
+    if width > 0 and min_credit_to_width > 0 and credit / width < min_credit_to_width:
+        _append_unique(reasons, "credit_to_width")
+    if not strategy.credit_quality_passes(credit=credit, width=width):
+        _append_unique(reasons, "credit_quality")
+    legs = [
+        OrderLeg(contract=short_put, side="sell_to_open", qty=1),
+        OrderLeg(contract=long_put, side="buy_to_open", qty=1),
+        OrderLeg(contract=short_call, side="sell_to_open", qty=1),
+        OrderLeg(contract=long_call, side="buy_to_open", qty=1),
+    ]
+    roundtrip_cost = strategy.modeled_entry_cost(legs) * 2.0
+    details["modeled_roundtrip_cost"] = round(roundtrip_cost, 4)
+    details["near_miss"] = {
+        "structure": "iron_condor",
+        "credit": credit,
+        "width": width,
+        "max_loss": max_loss,
+        "credit_to_width": round(credit / width, 6) if width > 0 else None,
+        "modeled_roundtrip_cost": round(roundtrip_cost, 4),
+        "required_credit_for_roundtrip": round(
+            roundtrip_cost * float(strategy.params.get("min_credit_to_roundtrip_cost", 0.0)),
+            4,
+        ),
+        "legs": [
+            {"side": "sell_to_open", **_contract_near_miss_summary(short_put, as_of=context.as_of)},
+            {"side": "buy_to_open", **_contract_near_miss_summary(long_put, as_of=context.as_of)},
+            {"side": "sell_to_open", **_contract_near_miss_summary(short_call, as_of=context.as_of)},
+            {"side": "buy_to_open", **_contract_near_miss_summary(long_call, as_of=context.as_of)},
+        ],
+        **_leg_quality_summary([short_put, long_put, short_call, long_call]),
+    }
+    if not strategy.cost_adjusted_credit_passes(credit=credit, legs=legs):
+        _append_unique(reasons, "cost_adjusted_credit")
+    return reasons
+
+
+def _strategy_generation_diagnostics(strategy: Any, context: StrategyContext) -> dict[str, Any]:
+    """Explain why an enabled strategy did not produce a candidate order."""
+    reasons: list[str] = []
+    details: dict[str, Any] = {}
+    if not strategy.enabled():
+        _append_unique(reasons, "disabled")
+    if not strategy.allowed_for_underlying(context):
+        _append_unique(reasons, "not_allowed")
+    if strategy.name in _EARNINGS_BLACKOUT_STRATEGIES and strategy.in_earnings_blackout(context):
+        _append_unique(reasons, "earnings_blackout")
+    if strategy.name in _EVENT_RISK_STRATEGIES and not strategy.event_risk_filter_passes(context):
+        _append_unique(reasons, "event_risk")
+    if strategy.name in _TECHNICAL_REGIME_STRATEGIES and not strategy.technical_regime_filter_passes(context):
+        _append_unique(reasons, "technical_regime")
+    if strategy.name in _IV_REALIZED_STRATEGIES and not strategy.implied_realized_filter_passes(context):
+        _append_unique(reasons, "iv_realized")
+    try:
+        if strategy.order_quantity(context) <= 0:
+            _append_unique(reasons, "zero_quantity")
+    except Exception as exc:
+        details["quantity_error"] = f"{type(exc).__name__}: {exc}"
+    if strategy.name == "vertical_spread":
+        reasons.extend(reason for reason in _vertical_generation_reasons(strategy, context, details) if reason not in reasons)
+    elif strategy.name == "iron_condor":
+        reasons.extend(reason for reason in _iron_condor_generation_reasons(strategy, context, details) if reason not in reasons)
+    if not reasons:
+        reasons.append("strategy_returned_none")
+    return {
+        "strategy": str(strategy.name),
+        "reasons": reasons,
+        "details": details,
+    }
+
+
 def _symbol_scan_health(
     context: StrategyContext,
     *,
@@ -401,6 +735,9 @@ def _symbol_scan_health(
         "accepted_count": 0,
         "rejected_count": 0,
         "top_rejection_reasons": {},
+        "strategy_diagnostics": [],
+        "top_strategy_blockers": {},
+        "near_misses": [],
     }
 
 
@@ -423,6 +760,9 @@ def _unavailable_symbol_scan_health(*, symbol: str, reason: str) -> dict[str, An
         "accepted_count": 0,
         "rejected_count": 0,
         "top_rejection_reasons": {},
+        "strategy_diagnostics": [],
+        "top_strategy_blockers": {},
+        "near_misses": [],
         "context_available": False,
         "context_error": reason,
     }
@@ -434,9 +774,12 @@ def _scan_health_summary(
     ranked_candidates: list[dict[str, Any]],
     accepted: list[dict[str, Any]],
     rejected: list[dict[str, Any]],
+    event_data_health: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     by_symbol = {str(item["symbol"]): dict(item) for item in symbol_health}
     rejection_reasons_by_symbol: dict[str, dict[str, int]] = {}
+    strategy_blockers: dict[str, int] = {}
+    near_misses: list[dict[str, Any]] = []
     for candidate in ranked_candidates:
         symbol = str(candidate.get("underlying", ""))
         if symbol in by_symbol:
@@ -458,6 +801,26 @@ def _scan_health_summary(
             continue
         by_symbol[symbol]["top_rejection_reasons"] = dict(
             sorted(reasons.items(), key=lambda item: (-item[1], item[0]))[:5]
+        )
+    for item in by_symbol.values():
+        symbol_blockers: dict[str, int] = {}
+        for diagnostic in item.get("strategy_diagnostics", []) or []:
+            for reason in diagnostic.get("reasons", []) or []:
+                reason_text = str(reason)
+                symbol_blockers[reason_text] = symbol_blockers.get(reason_text, 0) + 1
+                strategy_blockers[reason_text] = strategy_blockers.get(reason_text, 0) + 1
+            near_miss = (diagnostic.get("details") or {}).get("near_miss")
+            if isinstance(near_miss, dict):
+                row = {
+                    "symbol": str(item["symbol"]),
+                    "strategy": str(diagnostic.get("strategy", "")),
+                    "reasons": [str(reason) for reason in diagnostic.get("reasons", [])],
+                    **near_miss,
+                }
+                item.setdefault("near_misses", []).append(row)
+                near_misses.append(row)
+        item["top_strategy_blockers"] = dict(
+            sorted(symbol_blockers.items(), key=lambda value: (-value[1], value[0]))[:5]
         )
     top_reasons = _rejection_summary(rejected)["by_reason"]
     symbols = sorted(by_symbol)
@@ -486,6 +849,12 @@ def _scan_health_summary(
         "accepted_count": len(accepted),
         "rejected_count": len(rejected),
         "top_rejection_reasons": dict(list(top_reasons.items())[:10]),
+        "top_strategy_blockers": dict(
+            sorted(strategy_blockers.items(), key=lambda item: (-item[1], item[0]))[:10]
+        ),
+        "near_miss_count": len(near_misses),
+        "near_misses": near_misses[:20],
+        "event_data_health": event_data_health or {},
         "by_symbol": [by_symbol[symbol] for symbol in symbols],
     }
 
@@ -510,11 +879,56 @@ def _persist_scan_health_report(*, paths: dict[str, Path], payload: dict[str, An
         f"- Stale data symbols: {', '.join(health['stale_data_symbols']) or 'none'}",
         f"- Missing Greeks symbols: {', '.join(health['missing_greeks_symbols']) or 'none'}",
         "",
-        "## Top Rejection Reasons",
+        "## Event Data Freshness",
         "",
     ]
+    event_health = health.get("event_data_health") or {}
+    if event_health:
+        lines.extend(
+            [
+                f"- Status: {event_health.get('status', 'unknown')}",
+                f"- Checked events: {event_health.get('checked_event_count', 0)}",
+                f"- Stale events: {event_health.get('stale_event_count', 0)}",
+                f"- Refresh overdue: {event_health.get('refresh_overdue_count', 0)}",
+                f"- Affected symbols: {', '.join(event_health.get('affected_symbols', [])) or 'none'}",
+                "",
+            ]
+        )
+        stale_rows = list(event_health.get("stale_events", []))
+        overdue_rows = list(event_health.get("refresh_overdue", []))
+        if stale_rows or overdue_rows:
+            lines.append("Event freshness issues:")
+            for item in [*stale_rows, *overdue_rows][:10]:
+                lines.append(
+                    f"- {item.get('symbol', '')} {item.get('field', '')}: "
+                    f"{item.get('reason', '')} ({item.get('value', 'n/a')})"
+                )
+            lines.append("")
+    else:
+        lines.extend(["- Status: unavailable", ""])
+    lines.extend(["## Top Rejection Reasons", ""])
     if health["top_rejection_reasons"]:
         lines.extend(f"- {reason}: {count}" for reason, count in health["top_rejection_reasons"].items())
+    else:
+        lines.append("- none")
+    lines.extend(["", "## Top Strategy Blockers", ""])
+    if health["top_strategy_blockers"]:
+        lines.extend(f"- {reason}: {count}" for reason, count in health["top_strategy_blockers"].items())
+    else:
+        lines.append("- none")
+    lines.extend(["", "## Near-Miss Structures", ""])
+    if health["near_misses"]:
+        for item in health["near_misses"][:10]:
+            credit = item.get("credit")
+            width = item.get("width")
+            cost = item.get("modeled_roundtrip_cost")
+            credit_text = f"${float(credit):.2f}" if isinstance(credit, (int, float)) else "n/a"
+            width_text = f"${float(width):.2f}" if isinstance(width, (int, float)) else "n/a"
+            cost_text = f"${float(cost):.2f}" if isinstance(cost, (int, float)) else "n/a"
+            lines.append(
+                f"- {item['symbol']} {item['strategy']}: {', '.join(item.get('reasons', []))}; "
+                f"credit {credit_text}, width {width_text}, modeled roundtrip {cost_text}"
+            )
     else:
         lines.append("- none")
     lines.extend(["", "## By Symbol", ""])
@@ -536,9 +950,18 @@ def _persist_scan_health_report(*, paths: dict[str, Path], payload: dict[str, An
                 f"- Candidates: {item['candidate_count']}",
                 f"- Accepted: {item['accepted_count']}",
                 f"- Rejected: {item['rejected_count']}",
+                f"- Top strategy blockers: {', '.join(f'{reason} ({count})' for reason, count in item['top_strategy_blockers'].items()) or 'none'}",
+                f"- Near misses: {len(item.get('near_misses', []))}",
                 "",
             ]
         )
+        if item.get("strategy_diagnostics"):
+            lines.append("Strategy diagnostics:")
+            for diagnostic in item["strategy_diagnostics"]:
+                lines.append(
+                    f"- {diagnostic['strategy']}: {', '.join(diagnostic['reasons']) or 'none'}"
+                )
+            lines.append("")
     lines.extend(["```json", json.dumps(health, indent=2, sort_keys=True), "```", ""])
     atomic_write_text(path, "\n".join(lines), lock=False)
     return path
@@ -684,6 +1107,8 @@ def scan_market(*, config: dict[str, Any], as_of: date | None = None, dry_run: b
     positions = refresh_positions(current_positions(paths), client=client, as_of=as_of)
     strategies = build_enabled_strategies(config)
     underlyings = configured_underlyings(config)
+    event_data_health = event_data_freshness_report(underlyings, config=config, as_of=as_of)
+    underlyings = event_data_health["sanitized_underlyings"]
     config = {
         **config,
         "_underlying_metadata": {str(item.get("symbol", "")): item for item in underlyings},
@@ -727,13 +1152,12 @@ def scan_market(*, config: dict[str, Any], as_of: date | None = None, dry_run: b
                 }
             )
             continue
-        symbol_health.append(
-            _symbol_scan_health(
-                context,
-                gates=config.get("gates", {}),
-                as_of=as_of,
-            )
+        current_symbol_health = _symbol_scan_health(
+            context,
+            gates=config.get("gates", {}),
+            as_of=as_of,
         )
+        symbol_health.append(current_symbol_health)
         earnings_research = scan_earnings_calendar_candidates(context, research_cfg)
         vol_crush_research = scan_volatility_crush_iron_condor_candidates(context, vol_crush_cfg)
         research_candidates.extend(earnings_research)
@@ -761,6 +1185,9 @@ def scan_market(*, config: dict[str, Any], as_of: date | None = None, dry_run: b
         for strategy in strategies:
             order = strategy.generate_order(context)
             if order is None:
+                current_symbol_health["strategy_diagnostics"].append(
+                    _strategy_generation_diagnostics(strategy, context)
+                )
                 continue
             critique = critique_trade(order)
             structural_severity = str(critique.get("severity", "none"))
@@ -939,12 +1366,18 @@ def scan_market(*, config: dict[str, Any], as_of: date | None = None, dry_run: b
         "ai_disagreements": ai_disagreements,
         "accepted": accepted,
         "rejected": rejected,
+        "event_data_health": {
+            key: value
+            for key, value in event_data_health.items()
+            if key != "sanitized_underlyings"
+        },
     }
     result["scan_health"] = _scan_health_summary(
         symbol_health=symbol_health,
         ranked_candidates=result["ranked_candidates"],
         accepted=accepted,
         rejected=rejected,
+        event_data_health=result["event_data_health"],
     )
     report_path = _persist_candidate_scan(
         paths=paths,

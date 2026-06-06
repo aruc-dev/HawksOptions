@@ -42,8 +42,8 @@ underlyings:
     tax_classification: equity_option
     max_contracts: 2
     strategies_allowed: [vertical_spread, earnings_iron_condor]
-    next_earnings_date: 2026-05-02
-    ex_dividend_date: 2026-05-09
+    next_earnings_date:
+    ex_dividend_date:
     dividend_amount: 0.27
     realized_vol_20d: 0.22
     atr_pct: 0.021
@@ -54,8 +54,8 @@ underlyings:
     tax_classification: equity_option
     max_contracts: 2
     strategies_allowed: [vertical_spread, earnings_iron_condor]
-    next_earnings_date: 2026-05-06
-    ex_dividend_date: 2026-05-20
+    next_earnings_date:
+    ex_dividend_date:
     dividend_amount: 0.83
     realized_vol_20d: 0.20
     atr_pct: 0.018

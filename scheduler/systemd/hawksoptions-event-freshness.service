@@ -1,0 +1,12 @@
+[Unit]
+Description=HawksOptions event data freshness check
+
+[Service]
+Type=oneshot
+User=ec2-user
+Group=ec2-user
+WorkingDirectory=/home/ec2-user/HawksOptions
+EnvironmentFile=/etc/hawksoptions/hawksoptions.env
+ExecStart=/home/ec2-user/HawksOptions/scripts/run_hawksoptions_job.sh scheduler/run_event_freshness_check.py --fail-on-stale
+TimeoutStartSec=5min
+Restart=no
