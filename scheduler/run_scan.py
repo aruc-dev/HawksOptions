@@ -20,6 +20,7 @@ from ai.news_gate import evaluate_news_gate
 from ai.openai_client import critique_with_llm, safe_review_result
 from ai.trade_idea_critic import critique_trade
 from core.contract_selector import select_iron_condor, select_vertical_spread
+from core.event_freshness import event_data_freshness_report
 from core.file_lock import atomic_write_text
 from core.models import OptionContract, OrderLeg, StrategyContext, StrategyOrder
 from core.order_executor import execute_order, persist_open_order, position_from_order
@@ -279,6 +280,7 @@ def _persist_candidate_scan(
         "research_candidates": payload["research_candidates"],
         "research_traces": payload["research_traces"],
         "ai_disagreements": payload["ai_disagreements"],
+        "event_data_health": payload["event_data_health"],
         "chosen_order": payload["accepted"][0] if payload["accepted"] else None,
         "chosen_orders": payload["accepted"],
         "accepted": payload["accepted"],
@@ -772,6 +774,7 @@ def _scan_health_summary(
     ranked_candidates: list[dict[str, Any]],
     accepted: list[dict[str, Any]],
     rejected: list[dict[str, Any]],
+    event_data_health: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     by_symbol = {str(item["symbol"]): dict(item) for item in symbol_health}
     rejection_reasons_by_symbol: dict[str, dict[str, int]] = {}
@@ -851,6 +854,7 @@ def _scan_health_summary(
         ),
         "near_miss_count": len(near_misses),
         "near_misses": near_misses[:20],
+        "event_data_health": event_data_health or {},
         "by_symbol": [by_symbol[symbol] for symbol in symbols],
     }
 
@@ -875,9 +879,34 @@ def _persist_scan_health_report(*, paths: dict[str, Path], payload: dict[str, An
         f"- Stale data symbols: {', '.join(health['stale_data_symbols']) or 'none'}",
         f"- Missing Greeks symbols: {', '.join(health['missing_greeks_symbols']) or 'none'}",
         "",
-        "## Top Rejection Reasons",
+        "## Event Data Freshness",
         "",
     ]
+    event_health = health.get("event_data_health") or {}
+    if event_health:
+        lines.extend(
+            [
+                f"- Status: {event_health.get('status', 'unknown')}",
+                f"- Checked events: {event_health.get('checked_event_count', 0)}",
+                f"- Stale events: {event_health.get('stale_event_count', 0)}",
+                f"- Refresh overdue: {event_health.get('refresh_overdue_count', 0)}",
+                f"- Affected symbols: {', '.join(event_health.get('affected_symbols', [])) or 'none'}",
+                "",
+            ]
+        )
+        stale_rows = list(event_health.get("stale_events", []))
+        overdue_rows = list(event_health.get("refresh_overdue", []))
+        if stale_rows or overdue_rows:
+            lines.append("Event freshness issues:")
+            for item in [*stale_rows, *overdue_rows][:10]:
+                lines.append(
+                    f"- {item.get('symbol', '')} {item.get('field', '')}: "
+                    f"{item.get('reason', '')} ({item.get('value', 'n/a')})"
+                )
+            lines.append("")
+    else:
+        lines.extend(["- Status: unavailable", ""])
+    lines.extend(["## Top Rejection Reasons", ""])
     if health["top_rejection_reasons"]:
         lines.extend(f"- {reason}: {count}" for reason, count in health["top_rejection_reasons"].items())
     else:
@@ -1078,6 +1107,8 @@ def scan_market(*, config: dict[str, Any], as_of: date | None = None, dry_run: b
     positions = refresh_positions(current_positions(paths), client=client, as_of=as_of)
     strategies = build_enabled_strategies(config)
     underlyings = configured_underlyings(config)
+    event_data_health = event_data_freshness_report(underlyings, config=config, as_of=as_of)
+    underlyings = event_data_health["sanitized_underlyings"]
     config = {
         **config,
         "_underlying_metadata": {str(item.get("symbol", "")): item for item in underlyings},
@@ -1335,12 +1366,18 @@ def scan_market(*, config: dict[str, Any], as_of: date | None = None, dry_run: b
         "ai_disagreements": ai_disagreements,
         "accepted": accepted,
         "rejected": rejected,
+        "event_data_health": {
+            key: value
+            for key, value in event_data_health.items()
+            if key != "sanitized_underlyings"
+        },
     }
     result["scan_health"] = _scan_health_summary(
         symbol_health=symbol_health,
         ranked_candidates=result["ranked_candidates"],
         accepted=accepted,
         rejected=rejected,
+        event_data_health=result["event_data_health"],
     )
     report_path = _persist_candidate_scan(
         paths=paths,

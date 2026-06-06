@@ -429,6 +429,8 @@ sudo systemctl daemon-reload
 |------|------|---------|
 | `hawksoptions-secrets.service` | oneshot | Fetches AWS Secrets Manager values into `/dev/shm/.hawksoptions.env` |
 | `hawksoptions-secrets.timer` | timer | Ensures RAM secrets exist every 30 minutes; existing RAM secrets are reused by default |
+| `hawksoptions-event-freshness.service` | oneshot | Checks configured earnings and ex-dividend date freshness |
+| `hawksoptions-event-freshness.timer` | timer | Fires Monday-Friday before market open |
 | `hawksoptions-scan.service` | oneshot | Runs `scheduler/run_scan.py` |
 | `hawksoptions-scan.timer` | timer | Fires every 30 minutes |
 | `hawksoptions-risk-check.service` | oneshot | Refreshes positions, daily loss, Greeks snapshots, and risk actions |
@@ -449,8 +451,10 @@ timedatectl
 ```
 
 The bundled scan, risk-check, risk-watch, and roll timers are broad interval
-timers. If you want market-hours-only timers, edit the timer files or install
-drop-ins before enabling them.
+timers. The event-freshness timer is non-trading and runs before market open so
+stale configured event dates fail visibly before scans run. If you want
+market-hours-only timers, edit the timer files or install drop-ins before
+enabling them.
 
 ---
 
@@ -558,6 +562,7 @@ Enable scheduled jobs:
 
 ```bash
 sudo systemctl enable --now \
+  hawksoptions-event-freshness.timer \
   hawksoptions-scan.timer \
   hawksoptions-risk-check.timer \
   hawksoptions-risk-watch.timer \
@@ -629,6 +634,10 @@ hawksoptions-secrets.service  <---  hawksoptions-secrets.timer
         +--> consumed by hawksoptions-risk-watch.service
         +--> consumed by hawksoptions-roll-check.service
         +--> consumed by hawksoptions-eod-report.service
+
+hawksoptions-event-freshness.service
+        |
+        +--> reads config/underlyings.yaml and writes reports/event_data_freshness/
 
 hawksoptions-dashboard.service
         |
@@ -715,12 +724,14 @@ Temporarily stop all scheduled trading jobs:
 
 ```bash
 sudo systemctl stop \
+  hawksoptions-event-freshness.timer \
   hawksoptions-scan.timer \
   hawksoptions-risk-check.timer \
   hawksoptions-risk-watch.timer \
   hawksoptions-roll-check.timer \
   hawksoptions-eod-report.timer
 sudo systemctl disable \
+  hawksoptions-event-freshness.timer \
   hawksoptions-scan.timer \
   hawksoptions-risk-check.timer \
   hawksoptions-risk-watch.timer \
@@ -733,6 +744,7 @@ Re-enable timers:
 ```bash
 sudo systemctl enable --now \
   hawksoptions-secrets.timer \
+  hawksoptions-event-freshness.timer \
   hawksoptions-scan.timer \
   hawksoptions-risk-check.timer \
   hawksoptions-risk-watch.timer \

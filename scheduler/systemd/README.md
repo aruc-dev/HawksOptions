@@ -7,6 +7,7 @@ All unit names are prefixed with `hawksoptions-` so they can coexist with
 ## Units
 
 - `hawksoptions-secrets.service` + `.timer`
+- `hawksoptions-event-freshness.service` + `.timer`
 - `hawksoptions-scan.service` + `.timer`
 - `hawksoptions-risk-check.service` + `.timer`
 - `hawksoptions-risk-watch.service` + `.timer`
@@ -49,6 +50,7 @@ Enable timers:
 sudo systemctl enable --now \
   hawksoptions-secrets.service \
   hawksoptions-secrets.timer \
+  hawksoptions-event-freshness.timer \
   hawksoptions-scan.timer \
   hawksoptions-risk-check.timer \
   hawksoptions-risk-watch.timer \
@@ -63,6 +65,12 @@ only calls AWS Secrets Manager when that RAM file is missing/empty, unless
 jobs use `Wants=` plus `After=` for `hawksoptions-secrets.service`, so boot-time
 persistent timer runs order against the loader without requiring a fresh AWS call
 before every trading job.
+
+`hawksoptions-event-freshness.timer` runs before market open on weekdays and
+executes `scheduler/run_event_freshness_check.py --fail-on-stale`. It is
+non-trading: it checks configured earnings and ex-dividend dates, writes reports
+under `reports/event_data_freshness/`, and fails visibly when stale or
+refresh-overdue event metadata is present.
 
 Verify the host-level systemd settings after setup:
 

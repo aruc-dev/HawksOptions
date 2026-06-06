@@ -12,7 +12,7 @@ TARGET="$1"
 shift
 
 case "$TARGET" in
-  scheduler/run_scan.py|scheduler/run_risk_check.py|scheduler/run_risk_watch.py|scheduler/run_roll_check.py|scheduler/run_eod_report.py)
+  scheduler/run_scan.py|scheduler/run_risk_check.py|scheduler/run_risk_watch.py|scheduler/run_roll_check.py|scheduler/run_eod_report.py|scheduler/run_event_freshness_check.py)
     ;;
   *)
     echo "[hawksoptions-runner] unsupported scheduler target: $TARGET" >&2

@@ -142,6 +142,7 @@ python3 -m unittest discover -v
 python3 -W error::DeprecationWarning -m unittest discover
 ruff check .
 python3 -m compileall core strategies scheduler ai tests dashboard scripts
+python3 scheduler/run_event_freshness_check.py --no-report
 python3 scheduler/run_backtest.py --days 30 --fund 10000
 python3 scheduler/run_scan.py --dry-run
 python3 scheduler/run_risk_check.py --dry-run

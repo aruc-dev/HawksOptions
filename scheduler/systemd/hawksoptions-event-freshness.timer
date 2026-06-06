@@ -1,0 +1,11 @@
+[Unit]
+Description=Run HawksOptions event data freshness check before market open
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 12:15:00 UTC
+Persistent=true
+AccuracySec=1min
+Unit=hawksoptions-event-freshness.service
+
+[Install]
+WantedBy=timers.target
