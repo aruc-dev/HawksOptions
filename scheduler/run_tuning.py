@@ -17,7 +17,7 @@ import argparse
 import json
 import sys
 from copy import deepcopy
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from itertools import product
 from pathlib import Path
 from typing import Any
@@ -26,6 +26,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
 from core.backtest_engine import run_backtest
+from core.file_lock import atomic_write_text
 from core.config import load_config
 from strategies import build_enabled_strategies
 
@@ -106,7 +107,118 @@ def _run_once(
         "closed": result.closed_trade_count,
         "rejected_reasons": result.rejected_reasons,
         "ending_equity": result.ending_equity,
+        "metrics": result.metrics,
     }
+
+
+def _result_metrics(run: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(run.get("test"), dict):
+        return run["test"]
+    return run
+
+
+def _rank_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    ranked = []
+    for run in runs:
+        metrics = _result_metrics(run)
+        ranked.append(
+            {
+                "label": str(run.get("label") or metrics.get("label") or "run"),
+                "return_pct": float(metrics.get("return_pct", 0.0)),
+                "sharpe": float(metrics.get("sharpe", 0.0)),
+                "drawdown_pct": float(metrics.get("drawdown_pct", 0.0)),
+                "win_rate": float(metrics.get("win_rate", 0.0)),
+                "trades": int(metrics.get("trades", 0)),
+                "closed": int(metrics.get("closed", 0)),
+                "ending_equity": float(metrics.get("ending_equity", 0.0)),
+                "overrides": metrics.get("overrides", []),
+            }
+        )
+    ranked.sort(
+        key=lambda item: (
+            item["return_pct"],
+            item["sharpe"],
+            -item["drawdown_pct"],
+            item["win_rate"],
+            item["closed"],
+        ),
+        reverse=True,
+    )
+    return ranked
+
+
+def _profitable_runs(
+    ranked: list[dict[str, Any]],
+    *,
+    min_return_pct: float,
+    min_trades: int,
+) -> list[dict[str, Any]]:
+    return [
+        item
+        for item in ranked
+        if item["return_pct"] >= min_return_pct and item["closed"] >= min_trades
+    ]
+
+
+def _reports_dir(config: dict[str, Any]) -> Path:
+    configured = str(config.get("reporting", {}).get("reports_dir", "reports"))
+    path = Path(configured)
+    if path.is_absolute():
+        return path
+    return BASE_DIR / path
+
+
+def _write_tuning_report(
+    *,
+    config: dict[str, Any],
+    summary: dict[str, Any],
+    top: int,
+) -> Path:
+    report_dir = _reports_dir(config) / "tuning"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc)
+    path = report_dir / f"tuning_{timestamp:%Y%m%d_%H%M%S%f}Z.md"
+    ranked = list(summary.get("ranked_runs", []))
+    profitable = list(summary.get("profitable_runs", []))
+    lines = [
+        "# HawksOptions Tuning Report",
+        "",
+        f"- Generated at: {timestamp.isoformat()}",
+        f"- Runs: {len(ranked)}",
+        f"- Profitable runs: {len(profitable)}",
+        "",
+        "## Ranked Runs",
+        "",
+    ]
+    if ranked:
+        lines.append("| Rank | Label | Return % | Sharpe | Max DD % | Win % | Closed |")
+        lines.append("|---:|---|---:|---:|---:|---:|---:|")
+        for index, item in enumerate(ranked[:top], start=1):
+            lines.append(
+                f"| {index} | {item['label']} | {item['return_pct']:.2f} | "
+                f"{item['sharpe']:.2f} | {item['drawdown_pct']:.2f} | "
+                f"{item['win_rate']:.2f} | {item['closed']} |"
+            )
+    else:
+        lines.append("- none")
+    lines.extend(["", "## Profitable Candidates", ""])
+    if profitable:
+        for item in profitable[:top]:
+            overrides = ", ".join(
+                f"{override['path']}={override['value']}"
+                for override in item.get("overrides", [])
+                if isinstance(override, dict)
+            )
+            lines.append(
+                f"- {item['label']}: return {item['return_pct']:.2f}%, "
+                f"drawdown {item['drawdown_pct']:.2f}%, closed {item['closed']}; "
+                f"{overrides or 'no overrides'}"
+            )
+    else:
+        lines.append("- none met the configured profitability and trade-count filters")
+    lines.extend(["", "```json", json.dumps(summary, indent=2, sort_keys=True, default=str), "```", ""])
+    atomic_write_text(path, "\n".join(lines), lock=False)
+    return path
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -132,6 +244,10 @@ def main(argv: list[str] | None = None) -> int:
         help="split the requested days into train/test windows and report both",
     )
     parser.add_argument("--label", default="run", help="label printed in the summary")
+    parser.add_argument("--report", action="store_true", help="write a ranked tuning report under reports/tuning")
+    parser.add_argument("--top", type=int, default=10, help="number of ranked rows to include in the report")
+    parser.add_argument("--min-trades", type=int, default=1, help="minimum closed trades for profitable candidates")
+    parser.add_argument("--min-return-pct", type=float, default=0.0, help="minimum return percent for profitable candidates")
     args = parser.parse_args(argv)
 
     base_config = deepcopy(load_config())
@@ -181,7 +297,18 @@ def main(argv: list[str] | None = None) -> int:
                     start_date=start,
                 )
             )
-    summary = runs[0] if len(runs) == 1 and not args.walk_forward else {"runs": runs}
+    ranked_runs = _rank_runs(runs)
+    profitable = _profitable_runs(
+        ranked_runs,
+        min_return_pct=args.min_return_pct,
+        min_trades=args.min_trades,
+    )
+    if len(runs) == 1 and not args.walk_forward:
+        summary = {**runs[0], "ranked_runs": ranked_runs, "profitable_runs": profitable}
+    else:
+        summary = {"runs": runs, "ranked_runs": ranked_runs, "profitable_runs": profitable}
+    if args.report:
+        summary["report_path"] = str(_write_tuning_report(config=base_config, summary=summary, top=max(1, args.top)))
     print(json.dumps(summary))
     return 0
 

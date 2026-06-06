@@ -9,7 +9,13 @@ from unittest.mock import patch
 
 from core.config import load_config
 from core.models import OptionContract, StrategyContext
-from scheduler.run_scan import _market_context_for_scan, _strategy_generation_diagnostics, _symbol_scan_health, scan_market
+from scheduler.run_scan import (
+    _market_context_for_scan,
+    _scan_health_summary,
+    _strategy_generation_diagnostics,
+    _symbol_scan_health,
+    scan_market,
+)
 from strategies.vertical_spread import VerticalSpreadStrategy
 
 
@@ -294,6 +300,86 @@ class RunScanTests(unittest.TestCase):
         self.assertEqual(diagnostics["strategy"], "vertical_spread")
         self.assertNotIn("earnings_blackout", diagnostics["reasons"])
         self.assertIn("no_filtered_puts", diagnostics["reasons"])
+
+    def test_strategy_diagnostics_include_near_miss_spread_details(self):
+        config = load_config()
+        config["strategies"]["vertical_spread"]["enabled"] = True
+        config["strategies"]["vertical_spread"]["min_credit_to_width"] = 0.50
+        expiration = date(2026, 5, 28)
+        chain = [
+            OptionContract(
+                "SPY260528P00095000",
+                "SPY",
+                "put",
+                95.0,
+                expiration,
+                1.00,
+                1.04,
+                open_interest=500,
+                volume=50,
+                implied_volatility=0.30,
+                delta=-0.25,
+                underlying_price=100.0,
+            ),
+            OptionContract(
+                "SPY260528P00090000",
+                "SPY",
+                "put",
+                90.0,
+                expiration,
+                0.50,
+                0.54,
+                open_interest=400,
+                volume=40,
+                implied_volatility=0.28,
+                delta=-0.10,
+                underlying_price=100.0,
+            ),
+        ]
+        context = StrategyContext(
+            underlying={"symbol": "SPY", "strategies_allowed": ["vertical_spread"], "max_contracts": 1},
+            chain=chain,
+            config=config,
+            account={"equity": 100000.0, "portfolio_value": 100000.0, "cash": 100000.0, "buying_power": 200000.0},
+            iv_rank=50.0,
+            as_of=date(2026, 4, 23),
+            underlying_price=100.0,
+            current_iv=0.30,
+            realized_vol_20d=0.20,
+            atr_pct=0.01,
+        )
+
+        diagnostics = _strategy_generation_diagnostics(VerticalSpreadStrategy(config), context)
+        health = _scan_health_summary(
+            symbol_health=[
+                {
+                    "symbol": "SPY",
+                    "chain_available": True,
+                    "stale_quote_count": 0,
+                    "stale_quote_fallback_count": 0,
+                    "missing_greeks_contract_count": 0,
+                    "strategy_diagnostics": [diagnostics],
+                    "near_misses": [],
+                    "top_strategy_blockers": {},
+                    "candidate_count": 0,
+                    "accepted_count": 0,
+                    "rejected_count": 0,
+                    "top_rejection_reasons": {},
+                }
+            ],
+            ranked_candidates=[],
+            accepted=[],
+            rejected=[],
+        )
+
+        near_miss = diagnostics["details"]["near_miss"]
+        self.assertIn("credit_quality", diagnostics["reasons"])
+        self.assertEqual(near_miss["structure"], "vertical_spread")
+        self.assertEqual(near_miss["credit"], 50.0)
+        self.assertEqual(near_miss["width"], 500.0)
+        self.assertEqual(near_miss["min_open_interest"], 400)
+        self.assertEqual(health["near_miss_count"], 1)
+        self.assertEqual(health["near_misses"][0]["symbol"], "SPY")
 
     def test_scan_records_context_failure_without_aborting_symbol_loop(self):
         config = load_config()
