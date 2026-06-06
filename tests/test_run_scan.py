@@ -9,7 +9,8 @@ from unittest.mock import patch
 
 from core.config import load_config
 from core.models import OptionContract, StrategyContext
-from scheduler.run_scan import _market_context_for_scan, _symbol_scan_health, scan_market
+from scheduler.run_scan import _market_context_for_scan, _strategy_generation_diagnostics, _symbol_scan_health, scan_market
+from strategies.vertical_spread import VerticalSpreadStrategy
 
 
 def _sample_scan_config() -> dict:
@@ -198,6 +199,9 @@ class RunScanTests(unittest.TestCase):
         self.assertIn("candidate_count", first_symbol)
         self.assertIn("accepted_count", first_symbol)
         self.assertIn("rejected_count", first_symbol)
+        self.assertIn("strategy_diagnostics", first_symbol)
+        self.assertIn("top_strategy_blockers", first_symbol)
+        self.assertIn("top_strategy_blockers", health)
 
     def test_symbol_scan_health_counts_missing_greeks_and_stale_quotes(self):
         contract = OptionContract(
@@ -262,6 +266,34 @@ class RunScanTests(unittest.TestCase):
         self.assertEqual(health["stale_quote_fallback_count"], 1)
         self.assertEqual(health["invalid_quote_count"], 1)
         self.assertEqual(health["wide_quote_count"], 1)
+
+    def test_strategy_diagnostics_ignore_past_earnings_and_report_generation_blocker(self):
+        config = load_config()
+        config["strategies"]["vertical_spread"]["enabled"] = True
+        context = StrategyContext(
+            underlying={
+                "symbol": "AAPL",
+                "strategies_allowed": ["vertical_spread"],
+                "next_earnings_date": "2026-05-02",
+                "max_contracts": 1,
+            },
+            chain=[],
+            config=config,
+            account={"equity": 100000.0, "portfolio_value": 100000.0, "cash": 100000.0, "buying_power": 200000.0},
+            iv_rank=50.0,
+            as_of=date(2026, 6, 5),
+            underlying_price=200.0,
+            current_iv=0.30,
+            realized_vol_20d=0.20,
+            atr_pct=0.01,
+            next_earnings_date=date(2026, 5, 2),
+        )
+
+        diagnostics = _strategy_generation_diagnostics(VerticalSpreadStrategy(config), context)
+
+        self.assertEqual(diagnostics["strategy"], "vertical_spread")
+        self.assertNotIn("earnings_blackout", diagnostics["reasons"])
+        self.assertIn("no_filtered_puts", diagnostics["reasons"])
 
     def test_scan_records_context_failure_without_aborting_symbol_loop(self):
         config = load_config()

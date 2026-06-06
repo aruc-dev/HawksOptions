@@ -125,6 +125,15 @@ class PreTradeRiskTests(unittest.TestCase):
         decision = pre_trade_check(order, account=self.account, config=self.config, open_positions=[], as_of=date(2026, 4, 23))
         self.assertIn("earnings_blackout", decision.reasons)
 
+    def test_past_earnings_date_does_not_block_entry(self):
+        order = _order()
+        order.next_earnings_date = date(2026, 4, 1)
+
+        decision = pre_trade_check(order, account=self.account, config=self.config, open_positions=[], as_of=date(2026, 4, 23))
+
+        self.assertTrue(decision.accepted, decision.reasons)
+        self.assertNotIn("earnings_blackout", decision.reasons)
+
     def test_rejects_low_iv_rank_for_short_premium(self):
         decision = pre_trade_check(_order(iv_rank=10.0), account=self.account, config=self.config, open_positions=[], as_of=date(2026, 4, 23))
         self.assertIn("iv_rank_too_low_for_short_premium", decision.reasons)

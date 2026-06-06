@@ -36,7 +36,10 @@ class BaseStrategy(ABC):
         return self.name in list(context.underlying.get("strategies_allowed", []))
 
     def next_earnings_date(self, context: StrategyContext) -> date | None:
-        return _as_date(context.next_earnings_date or context.underlying.get("next_earnings_date"))
+        earnings_date = _as_date(context.next_earnings_date or context.underlying.get("next_earnings_date"))
+        if earnings_date is None or earnings_date < context.as_of:
+            return None
+        return earnings_date
 
     def ex_dividend_date(self, context: StrategyContext) -> date | None:
         return _as_date(context.ex_dividend_date or context.underlying.get("ex_dividend_date"))
@@ -46,7 +49,8 @@ class BaseStrategy(ABC):
         if earnings_date is None:
             return False
         blackout_days = int(self.config.get("gates", {}).get("earnings_blackout_days_before", 5))
-        return (earnings_date - context.as_of).days <= blackout_days
+        days_to_earnings = (earnings_date - context.as_of).days
+        return 0 <= days_to_earnings <= blackout_days
 
     def filtered_chain(self, context: StrategyContext, option_type: str) -> list:
         gates = self.config.get("gates", {})
